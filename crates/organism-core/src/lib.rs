@@ -556,6 +556,26 @@ mod tests {
     }
 
     #[test]
+    fn rejects_distance_joints_without_a_rest_length() {
+        let mut organism = Organism::new("Test organism");
+        organism.parts = vec![sample_part("a"), sample_part("b")];
+        organism.joints.push(Joint {
+            id: "distance-1".into(),
+            name: "Distance".into(),
+            kind: JointKind::Distance,
+            parent_part_id: "a".into(),
+            child_part_id: "b".into(),
+            anchor_parent_m: Vec3::ZERO,
+            anchor_child_m: Vec3::ZERO,
+            limits: None,
+            rest_length_m: None,
+        });
+
+        let errors = organism.validate().expect_err("distance rest length is required");
+        assert!(errors.iter().any(|error| error.contains("missing its rest length")));
+    }
+
+    #[test]
     fn rejects_joints_with_missing_parts() {
         let mut organism = Organism::new("Test organism");
         organism.joints.push(Joint {

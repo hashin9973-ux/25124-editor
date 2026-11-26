@@ -16,7 +16,7 @@ Top-level fields:
 
 Parts describe geometry, local/world transform data, and physical properties. Body physics is tagged as either rigid or soft. Soft-body fields are reserved in the data contract; they do not imply the current editor has a working deformable-body solver.
 
-Joints reference part IDs and store each attachment point in the corresponding part's local coordinates. Hinge angles are measured in radians; linear joint ranges are measured in meters. Distance joints store a positive `rest_length_m` between body-local anchors. The field is optional for other joint types.
+Joints reference part IDs and store each attachment point in the corresponding part's local coordinates. Hinge angles are measured in radians; linear joint ranges are measured in meters.
 
 ## motion.json
 
