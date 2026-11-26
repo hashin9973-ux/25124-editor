@@ -7,8 +7,12 @@ use organism_core::{
 use organism_serialization::save_project;
 use std::path::Path;
 
-const PART_RADIUS: f32 = 0.3;
 const EXPORT_DIRECTORY: &str = "exports";
+const PART_MASS_KG: f32 = 1.0;
+const PART_FRICTION: f32 = 0.75;
+const PART_RESTITUTION: f32 = 0.0;
+const PART_LINEAR_DAMPING: f32 = 0.03;
+const PART_ANGULAR_DAMPING: f32 = 0.05;
 
 fn main() {
     App::new()
@@ -17,7 +21,10 @@ fn main() {
         .init_resource::<DraftProject>()
         .init_resource::<EditorTool>()
         .add_systems(Startup, (setup_scene, setup_editor_panel))
-        .add_systems(Update, (handle_editor_buttons, edit_from_viewport))
+        .add_systems(
+            Update,
+            (handle_editor_buttons, edit_from_viewport, draw_joint_links),
+        )
         .run();
 }
 
@@ -48,18 +55,62 @@ impl Default for DraftProject {
 enum EditorTool {
     #[default]
     PlaceSphere,
+    PlaceCuboid,
+    PlaceCapsule,
+    ConnectFixed,
+    ConnectBall,
     ConnectHinge,
+    ConnectSlider,
+    ConnectDistance,
+}
+
+impl EditorTool {
+    fn joint_kind(self) -> Option<JointKind> {
+        match self {
+            Self::ConnectFixed => Some(JointKind::Fixed),
+            Self::ConnectBall => Some(JointKind::Ball),
+            Self::ConnectHinge => Some(JointKind::Hinge),
+            Self::ConnectSlider => Some(JointKind::Slider),
+            Self::ConnectDistance => Some(JointKind::Distance),
+            Self::PlaceSphere | Self::PlaceCuboid | Self::PlaceCapsule => None,
+        }
+    }
+
+    fn geometry(self) -> Option<Geometry> {
+        match self {
+            Self::PlaceSphere => Some(Geometry::Sphere { radius_m: 0.3 }),
+            Self::PlaceCuboid => Some(Geometry::Cuboid {
+                half_extents_m: DataVec3::new(0.25, 0.25, 0.25),
+            }),
+            Self::PlaceCapsule => Some(Geometry::Capsule {
+                radius_m: 0.2,
+                half_height_m: 0.45,
+            }),
+            Self::ConnectFixed
+            | Self::ConnectBall
+            | Self::ConnectHinge
+            | Self::ConnectSlider
+            | Self::ConnectDistance => None,
+        }
+    }
 }
 
 #[derive(Component)]
 struct PartTag {
     id: String,
+    pick_radius: f32,
 }
 
 #[derive(Component, Clone, Copy)]
 enum EditorButtonAction {
     PlaceSphere,
+    PlaceCuboid,
+    PlaceCapsule,
+    ConnectFixed,
+    ConnectBall,
     ConnectHinge,
+    ConnectSlider,
+    ConnectDistance,
     Save,
 }
 
@@ -75,6 +126,8 @@ fn setup_scene(
         Transform::from_xyz(0.0, -0.1, 0.0),
         RigidBody::Static,
         Collider::cuboid(floor_size * 0.5, 0.1, floor_size * 0.5),
+        Friction::new(0.85),
+        Restitution::new(0.0),
     ));
 
     commands.spawn((
@@ -93,6 +146,34 @@ fn setup_scene(
     ));
 }
 
+macro_rules! action_button {
+    ($panel:expr, $label:expr, $action:expr, $color:expr) => {
+        $panel
+            .spawn((
+                Button,
+                Node {
+                    width: Val::Px(236.0),
+                    height: Val::Px(34.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor($color),
+                $action,
+            ))
+            .with_children(|button| {
+                button.spawn((
+                    Text::new($label),
+                    TextFont {
+                        font_size: FontSize::Px(12.0),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            });
+    };
+}
+
 fn setup_editor_panel(mut commands: Commands) {
     commands
         .spawn((
@@ -100,9 +181,9 @@ fn setup_editor_panel(mut commands: Commands) {
                 position_type: PositionType::Absolute,
                 top: Val::Px(16.0),
                 left: Val::Px(16.0),
-                width: Val::Px(250.0),
+                width: Val::Px(260.0),
                 flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(8.0),
+                row_gap: Val::Px(7.0),
                 padding: UiRect::all(Val::Px(12.0)),
                 ..default()
             },
@@ -118,90 +199,94 @@ fn setup_editor_panel(mut commands: Commands) {
                 TextColor(Color::WHITE),
             ));
             panel.spawn((
-                Text::new("Place parts, connect joints, then simulate."),
+                Text::new("BODY CONSTRUCTION"),
                 TextFont {
-                    font_size: FontSize::Px(12.0),
+                    font_size: FontSize::Px(10.0),
                     ..default()
                 },
-                TextColor(Color::srgb(0.7, 0.74, 0.8)),
+                TextColor(Color::srgb(0.45, 0.74, 0.95)),
             ));
 
-            panel
-                .spawn((
-                    Button,
-                    Node {
-                        width: Val::Px(224.0),
-                        height: Val::Px(38.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.12, 0.2, 0.3)),
-                    EditorButtonAction::PlaceSphere,
-                ))
-                .with_children(|button| {
-                    button.spawn((
-                        Text::new("Place spheres"),
-                        TextFont {
-                            font_size: FontSize::Px(13.0),
-                            ..default()
-                        },
-                        TextColor(Color::WHITE),
-                    ));
-                });
-
-            panel
-                .spawn((
-                    Button,
-                    Node {
-                        width: Val::Px(224.0),
-                        height: Val::Px(38.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.12, 0.2, 0.3)),
-                    EditorButtonAction::ConnectHinge,
-                ))
-                .with_children(|button| {
-                    button.spawn((
-                        Text::new("Connect hinge"),
-                        TextFont {
-                            font_size: FontSize::Px(13.0),
-                            ..default()
-                        },
-                        TextColor(Color::WHITE),
-                    ));
-                });
-
-            panel
-                .spawn((
-                    Button,
-                    Node {
-                        width: Val::Px(224.0),
-                        height: Val::Px(38.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.16, 0.34, 0.23)),
-                    EditorButtonAction::Save,
-                ))
-                .with_children(|button| {
-                    button.spawn((
-                        Text::new("Save organism + motion"),
-                        TextFont {
-                            font_size: FontSize::Px(13.0),
-                            ..default()
-                        },
-                        TextColor(Color::WHITE),
-                    ));
-                });
+            action_button!(
+                panel,
+                "Add sphere",
+                EditorButtonAction::PlaceSphere,
+                Color::srgb(0.12, 0.2, 0.3)
+            );
+            action_button!(
+                panel,
+                "Add cuboid",
+                EditorButtonAction::PlaceCuboid,
+                Color::srgb(0.12, 0.2, 0.3)
+            );
+            action_button!(
+                panel,
+                "Add capsule",
+                EditorButtonAction::PlaceCapsule,
+                Color::srgb(0.12, 0.2, 0.3)
+            );
 
             panel.spawn((
-                Text::new("Place: left-click the ground\nConnect: click two parts\nExport: exports/*.json"),
+                Text::new("CONNECTIONS"),
                 TextFont {
-                    font_size: FontSize::Px(12.0),
+                    font_size: FontSize::Px(10.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.45, 0.74, 0.95)),
+            ));
+
+            action_button!(
+                panel,
+                "Connect fixed",
+                EditorButtonAction::ConnectFixed,
+                Color::srgb(0.16, 0.19, 0.26)
+            );
+            action_button!(
+                panel,
+                "Connect ball-and-socket",
+                EditorButtonAction::ConnectBall,
+                Color::srgb(0.16, 0.19, 0.26)
+            );
+            action_button!(
+                panel,
+                "Connect hinge",
+                EditorButtonAction::ConnectHinge,
+                Color::srgb(0.16, 0.19, 0.26)
+            );
+            action_button!(
+                panel,
+                "Connect slider",
+                EditorButtonAction::ConnectSlider,
+                Color::srgb(0.16, 0.19, 0.26)
+            );
+            action_button!(
+                panel,
+                "Connect distance",
+                EditorButtonAction::ConnectDistance,
+                Color::srgb(0.16, 0.19, 0.26)
+            );
+
+            panel.spawn((
+                Text::new("EXPORT"),
+                TextFont {
+                    font_size: FontSize::Px(10.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.45, 0.74, 0.95)),
+            ));
+            action_button!(
+                panel,
+                "Save organism + motion JSON",
+                EditorButtonAction::Save,
+                Color::srgb(0.16, 0.34, 0.23)
+            );
+
+            panel.spawn((
+                Text::new(
+                    "Place: click the ground\nConnect: select two parts\nJoints connect at their midpoint\nUnits: meters / kilograms / seconds",
+                ),
+                TextFont {
+                    font_size: FontSize::Px(11.0),
                     ..default()
                 },
                 TextColor(Color::srgb(0.72, 0.76, 0.82)),
@@ -220,14 +305,14 @@ fn handle_editor_buttons(
         }
 
         match action {
-            EditorButtonAction::PlaceSphere => {
-                *tool = EditorTool::PlaceSphere;
-                info!("Editor tool: place spheres");
-            }
-            EditorButtonAction::ConnectHinge => {
-                *tool = EditorTool::ConnectHinge;
-                info!("Editor tool: connect hinge; click two body parts");
-            }
+            EditorButtonAction::PlaceSphere => *tool = EditorTool::PlaceSphere,
+            EditorButtonAction::PlaceCuboid => *tool = EditorTool::PlaceCuboid,
+            EditorButtonAction::PlaceCapsule => *tool = EditorTool::PlaceCapsule,
+            EditorButtonAction::ConnectFixed => *tool = EditorTool::ConnectFixed,
+            EditorButtonAction::ConnectBall => *tool = EditorTool::ConnectBall,
+            EditorButtonAction::ConnectHinge => *tool = EditorTool::ConnectHinge,
+            EditorButtonAction::ConnectSlider => *tool = EditorTool::ConnectSlider,
+            EditorButtonAction::ConnectDistance => *tool = EditorTool::ConnectDistance,
             EditorButtonAction::Save => {
                 match save_project(
                     Path::new(EXPORT_DIRECTORY),
@@ -251,7 +336,7 @@ fn edit_from_viewport(
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform)>,
     ui_interactions: Query<&Interaction, With<Button>>,
-    part_query: Query<(Entity, &Transform, &PartTag)>,
+    part_query: Query<(Entity, &GlobalTransform, &PartTag)>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -280,121 +365,257 @@ fn edit_from_viewport(
     let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_position) else {
         return;
     };
-    let direction = ray.direction.as_vec3();
+    let ray_direction = ray.direction.as_vec3();
 
-    match *tool {
-        EditorTool::PlaceSphere => {
-            if direction.y.abs() < 1.0e-5 {
-                return;
-            }
-            let distance = -ray.origin.y / direction.y;
-            if distance <= 0.0 {
-                return;
-            }
-            let position = ray.origin + direction * distance + Vec3::Y * PART_RADIUS;
+    if let Some(geometry) = tool.geometry() {
+        place_body_part(
+            geometry,
+            ray.origin,
+            ray_direction,
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            &mut project,
+        );
+        return;
+    }
 
-            let sequence = project.next_part_id;
-            project.next_part_id += 1;
-            let part_id = format!("part-{sequence:04}");
-            let entity = commands
-                .spawn((
-                    Mesh3d(meshes.add(Sphere::new(PART_RADIUS))),
-                    MeshMaterial3d(materials.add(Color::srgb(0.24, 0.68, 0.92))),
-                    Transform::from_translation(position),
-                    RigidBody::Dynamic,
-                    Collider::sphere(PART_RADIUS),
-                    MassPropertiesBundle::from_shape(&Sphere::new(PART_RADIUS), 1.0),
-                    PartTag {
-                        id: part_id.clone(),
-                    },
-                ))
-                .id();
+    let Some(joint_kind) = tool.joint_kind() else {
+        return;
+    };
+    connect_body_parts(
+        joint_kind,
+        ray.origin,
+        ray_direction,
+        &part_query,
+        &mut commands,
+        &mut project,
+    );
+}
 
-            project.organism.parts.push(BodyPart {
-                id: part_id.clone(),
-                name: format!("Part {sequence}"),
-                geometry: Geometry::Sphere {
-                    radius_m: PART_RADIUS,
-                },
-                transform: Transform3::at(DataVec3::new(position.x, position.y, position.z)),
-                physics: BodyPhysics::Rigid(RigidBodyProperties {
-                    mass_kg: 1.0,
-                    ..default()
-                }),
-            });
+fn place_body_part(
+    geometry: Geometry,
+    ray_origin: Vec3,
+    ray_direction: Vec3,
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    project: &mut DraftProject,
+) {
+    if ray_direction.y.abs() < 1.0e-5 {
+        return;
+    }
+    let ground_distance = -ray_origin.y / ray_direction.y;
+    if ground_distance <= 0.0 {
+        return;
+    }
+    let ground_point = ray_origin + ray_direction * ground_distance;
 
-            debug!("Placed {part_id} as entity {entity:?}");
+    let (mesh, collider, pick_radius, ground_offset, color) = match &geometry {
+        Geometry::Sphere { radius_m } => (
+            meshes.add(Sphere::new(*radius_m)),
+            Collider::sphere(*radius_m),
+            *radius_m,
+            *radius_m,
+            Color::srgb(0.24, 0.68, 0.92),
+        ),
+        Geometry::Cuboid { half_extents_m } => {
+            let half_extents =
+                Vec3::new(half_extents_m.x, half_extents_m.y, half_extents_m.z);
+            (
+                meshes.add(Cuboid::from_size(half_extents * 2.0)),
+                Collider::cuboid(half_extents.x, half_extents.y, half_extents.z),
+                half_extents.length(),
+                half_extents.y,
+                Color::srgb(0.32, 0.78, 0.58),
+            )
         }
-        EditorTool::ConnectHinge => {
-            let picked = part_query
-                .iter()
-                .filter_map(|(entity, transform, tag)| {
-                    ray_sphere_distance(
-                        ray.origin,
-                        direction,
-                        transform.translation,
-                        PART_RADIUS * 1.15,
-                    )
-                    .map(|distance| (distance, entity, tag.id.clone(), transform.translation))
-                })
-                .min_by(|left, right| left.0.total_cmp(&right.0));
+        Geometry::Capsule {
+            radius_m,
+            half_height_m,
+        } => {
+            let full_segment_length = half_height_m * 2.0;
+            let outer_radius = radius_m + half_height_m;
+            (
+                meshes.add(Capsule3d::new(*radius_m, full_segment_length)),
+                Collider::capsule(*radius_m, full_segment_length),
+                outer_radius,
+                outer_radius,
+                Color::srgb(0.92, 0.63, 0.28),
+            )
+        }
+    };
 
-            let Some((_, child_entity, child_id, child_position)) = picked else {
-                project.pending_joint_part = None;
-                info!("No body part under cursor; select a body part");
-                return;
-            };
+    let position = ground_point + Vec3::Y * ground_offset;
+    let sequence = project.next_part_id;
+    project.next_part_id += 1;
+    let part_id = format!("part-{sequence:04}");
+    let properties = RigidBodyProperties {
+        mass_kg: PART_MASS_KG,
+        friction: PART_FRICTION,
+        restitution: PART_RESTITUTION,
+        linear_damping: PART_LINEAR_DAMPING,
+        angular_damping: PART_ANGULAR_DAMPING,
+    };
 
-            let Some(parent_id) = project.pending_joint_part.take() else {
-                project.pending_joint_part = Some(child_id.clone());
-                info!("Selected {child_id}; now select the second body part");
-                return;
-            };
+    let mass_properties = MassPropertiesBundle::from_shape(&collider, properties.mass_kg);
+    commands.spawn((
+        Mesh3d(mesh),
+        MeshMaterial3d(materials.add(color)),
+        Transform::from_translation(position),
+        RigidBody::Dynamic,
+        collider,
+        mass_properties,
+        Friction::new(properties.friction),
+        Restitution::new(properties.restitution),
+        LinearDamping(properties.linear_damping),
+        AngularDamping(properties.angular_damping),
+        PartTag {
+            id: part_id.clone(),
+            pick_radius,
+        },
+    ));
 
-            if parent_id == child_id {
-                project.pending_joint_part = Some(child_id);
-                info!("Choose a different body part for the second endpoint");
-                return;
-            }
+    project.organism.parts.push(BodyPart {
+        id: part_id.clone(),
+        name: format!("Part {sequence}"),
+        geometry,
+        transform: Transform3::at(DataVec3::new(position.x, position.y, position.z)),
+        physics: BodyPhysics::Rigid(properties),
+    });
+    info!("Added {part_id}");
+}
 
-            let Some((parent_entity, parent_position)) = part_query
-                .iter()
-                .find(|(_, _, tag)| tag.id == parent_id)
-                .map(|(entity, transform, _)| (entity, transform.translation))
-            else {
-                warn!("Selected parent part {parent_id} no longer exists");
-                return;
-            };
+fn connect_body_parts(
+    kind: JointKind,
+    ray_origin: Vec3,
+    ray_direction: Vec3,
+    part_query: &Query<(Entity, &GlobalTransform, &PartTag)>,
+    commands: &mut Commands,
+    project: &mut DraftProject,
+) {
+    let picked = part_query
+        .iter()
+        .filter_map(|(entity, transform, tag)| {
+            let position = transform.translation();
+            ray_sphere_distance(ray_origin, ray_direction, position, tag.pick_radius * 1.08)
+                .map(|distance| (distance, entity, tag.id.clone(), transform))
+        })
+        .min_by(|left, right| left.0.total_cmp(&right.0));
 
-            let world_anchor = (parent_position + child_position) * 0.5;
+    let Some((_, child_entity, child_id, child_transform)) = picked else {
+        project.pending_joint_part = None;
+        info!("No body part under cursor; select a body part");
+        return;
+    };
+
+    let Some(parent_id) = project.pending_joint_part.take() else {
+        project.pending_joint_part = Some(child_id.clone());
+        info!("Selected {child_id}; now select the second body part");
+        return;
+    };
+
+    if parent_id == child_id {
+        project.pending_joint_part = Some(child_id);
+        info!("Choose a different body part for the second endpoint");
+        return;
+    }
+
+    let Some((parent_entity, parent_transform)) = part_query
+        .iter()
+        .find(|(_, _, tag)| tag.id == parent_id)
+        .map(|(entity, transform, _)| (entity, transform))
+    else {
+        warn!("Selected parent part {parent_id} no longer exists");
+        return;
+    };
+
+    let parent_position = parent_transform.translation();
+    let child_position = child_transform.translation();
+    let center_distance = parent_position.distance(child_position);
+    let world_anchor = (parent_position + child_position) * 0.5;
+
+    match kind {
+        JointKind::Fixed => {
+            commands.spawn(FixedJoint::new(parent_entity, child_entity).with_anchor(world_anchor));
+        }
+        JointKind::Ball => {
+            commands.spawn(
+                SphericalJoint::new(parent_entity, child_entity).with_anchor(world_anchor),
+            );
+        }
+        JointKind::Hinge => {
             commands.spawn(
                 RevoluteJoint::new(parent_entity, child_entity)
-                    .with_hinge_axis(Vec3::Z)
-                    .with_local_anchor1(world_anchor - parent_position)
-                    .with_local_anchor2(world_anchor - child_position),
+                    .with_anchor(world_anchor)
+                    .with_hinge_axis(Vec3::Z),
             );
+        }
+        JointKind::Slider => {
+            commands.spawn(
+                PrismaticJoint::new(parent_entity, child_entity)
+                    .with_anchor(world_anchor)
+                    .with_slider_axis(Vec3::X),
+            );
+        }
+        JointKind::Distance => {
+            commands.spawn(
+                DistanceJoint::new(parent_entity, child_entity)
+                    .with_rest_length(center_distance.max(0.001)),
+            );
+        }
+    }
 
-            let joint_sequence = project.next_joint_id;
-            project.next_joint_id += 1;
-            project.organism.joints.push(Joint {
-                id: format!("joint-{joint_sequence:04}"),
-                name: format!("{parent_id} to {child_id} hinge"),
-                kind: JointKind::Hinge,
-                parent_part_id: parent_id,
-                child_part_id: child_id,
-                anchor_parent_m: DataVec3::new(
-                    world_anchor.x - parent_position.x,
-                    world_anchor.y - parent_position.y,
-                    world_anchor.z - parent_position.z,
-                ),
-                anchor_child_m: DataVec3::new(
-                    world_anchor.x - child_position.x,
-                    world_anchor.y - child_position.y,
-                    world_anchor.z - child_position.z,
-                ),
-                limits: None,
-            });
-            info!("Created hinge joint between two body parts");
+    let joint_sequence = project.next_joint_id;
+    project.next_joint_id += 1;
+
+    let (anchor_parent, anchor_child, rest_length_m) = if kind == JointKind::Distance {
+        (Vec3::ZERO, Vec3::ZERO, Some(center_distance.max(0.001)))
+    } else {
+        (
+            parent_transform
+                .affine()
+                .inverse()
+                .transform_point3(world_anchor),
+            child_transform
+                .affine()
+                .inverse()
+                .transform_point3(world_anchor),
+            None,
+        )
+    };
+
+    project.organism.joints.push(Joint {
+        id: format!("joint-{joint_sequence:04}"),
+        name: format!("{parent_id} to {child_id} {kind:?}"),
+        kind,
+        parent_part_id: parent_id,
+        child_part_id: child_id,
+        anchor_parent_m: DataVec3::new(anchor_parent.x, anchor_parent.y, anchor_parent.z),
+        anchor_child_m: DataVec3::new(anchor_child.x, anchor_child.y, anchor_child.z),
+        limits: None,
+        rest_length_m,
+    });
+    info!("Created {kind:?} connection");
+}
+
+fn draw_joint_links(
+    mut gizmos: Gizmos,
+    part_query: Query<(&GlobalTransform, &PartTag)>,
+    project: Res<DraftProject>,
+) {
+    for joint in &project.organism.joints {
+        let parent = part_query
+            .iter()
+            .find(|(_, tag)| tag.id == joint.parent_part_id)
+            .map(|(transform, _)| transform.translation());
+        let child = part_query
+            .iter()
+            .find(|(_, tag)| tag.id == joint.child_part_id)
+            .map(|(transform, _)| transform.translation());
+
+        if let (Some(parent), Some(child)) = (parent, child) {
+            gizmos.line(parent, child, Color::srgb(0.95, 0.78, 0.32));
         }
     }
 }

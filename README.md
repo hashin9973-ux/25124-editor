@@ -9,8 +9,10 @@ The editor models **structure**, **physical capabilities**, and **behavior** sep
 The first vertical slice provides:
 
 - A Bevy 3D viewport with an Avian physics world and a static ground plane.
-- Left-click placement of rigid spherical body parts on the ground plane.
-- A Connect Hinge tool: click two existing parts to connect them with an Avian revolute joint at their midpoint.
+- Left-click placement of rigid spheres, cuboids, and capsules on the ground plane.
+- Fixed, ball-and-socket, hinge, slider, and distance connections between clicked body parts.
+- Joint links visualized in the viewport.
+- Physical mass, friction, restitution, and damping applied to the Avian bodies.
 - Separate organism.json and motion.json export through the Save button.
 - An engine-independent organism model crate with validation.
 - A serialization crate with load/save functions and a sample data format.
@@ -31,7 +33,7 @@ Use the left panel:
 2. **Connect hinge**: click one part, then another part. The editor creates a hinge between them.
 3. **Save JSON**: writes exports/organism.json and exports/motion.json relative to the working directory.
 
-The initial prototype uses one sphere geometry to validate the full editing-to-simulation-to-export path before adding a larger tool palette.
+The current editor remains an early construction prototype. It does not yet include freeform sculpting, soft-body simulation, actuator authoring, a runtime behavior controller, camera orbit controls, or undo/redo.
 
 ## Workspace
 

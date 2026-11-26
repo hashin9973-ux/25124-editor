@@ -180,6 +180,9 @@ pub struct Joint {
     pub anchor_parent_m: Vec3,
     pub anchor_child_m: Vec3,
     pub limits: Option<JointLimits>,
+    /// Used by distance joints. The value is measured between the two body-local anchors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rest_length_m: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -345,6 +348,20 @@ impl Organism {
                 if !limits.min.is_finite() || !limits.max.is_finite() || limits.min > limits.max {
                     errors.push(format!("joint {} has invalid limits", joint.id));
                 }
+            }
+            if let Some(rest_length_m) = joint.rest_length_m {
+                if !rest_length_m.is_finite() || rest_length_m <= 0.0 {
+                    errors.push(format!("joint {} has invalid rest length", joint.id));
+                }
+                if joint.kind != JointKind::Distance {
+                    errors.push(format!(
+                        "joint {} defines a rest length but is not a distance joint",
+                        joint.id
+                    ));
+                }
+            }
+            if joint.kind == JointKind::Distance && joint.rest_length_m.is_none() {
+                errors.push(format!("distance joint {} is missing its rest length", joint.id));
             }
         }
 
@@ -550,6 +567,7 @@ mod tests {
             anchor_parent_m: Vec3::ZERO,
             anchor_child_m: Vec3::ZERO,
             limits: None,
+            rest_length_m: None,
         });
 
         let errors = organism
