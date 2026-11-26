@@ -19,7 +19,7 @@ impl fmt::Display for PartEditError {
             Self::UnsupportedPhysics => "Only rigid body parts can be edited with this control.",
             Self::InvalidMass => {
                 "The edited geometry cannot produce a valid mass at the current density."
-            },
+            }
         };
         formatter.write_str(message)
     }
