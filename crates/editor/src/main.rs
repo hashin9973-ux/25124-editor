@@ -218,6 +218,7 @@ macro_rules! action_button {
 fn setup_editor_panel(mut commands: Commands) {
     commands
         .spawn((
+            Button,
             Node {
                 position_type: PositionType::Absolute,
                 top: Val::Px(16.0),
@@ -511,11 +512,10 @@ fn place_body_part(
     let sequence = project.next_part_id;
     project.next_part_id += 1;
     let part_id = format!("part-{sequence:04}");
-    let estimated_mass_kg = geometry.volume_m3() * PART_DENSITY_KG_M3;
-    if !estimated_mass_kg.is_finite() || estimated_mass_kg <= 0.0 {
-        warn!("Cannot place a part with invalid volume or estimated mass");
+    let Some(estimated_mass_kg) = geometry.mass_kg_at_density(PART_DENSITY_KG_M3) else {
+        warn!("Cannot place a part with invalid geometry or estimated mass");
         return;
-    }
+    };
     let properties = RigidBodyProperties {
         mass_kg: estimated_mass_kg,
         density_kg_m3: PART_DENSITY_KG_M3,
@@ -525,7 +525,9 @@ fn place_body_part(
         angular_damping: PART_ANGULAR_DAMPING,
     };
 
-    let mass_properties = MassPropertiesBundle::from_shape(&collider, properties.mass_kg);
+    // Avian expects density here and derives mass/inertia from the collider volume.
+    let mass_properties =
+        MassPropertiesBundle::from_shape(&collider, properties.density_kg_m3);
     commands.spawn((
         Mesh3d(mesh),
         MeshMaterial3d(materials.add(color)),

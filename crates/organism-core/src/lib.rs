@@ -100,6 +100,17 @@ impl Geometry {
         }
     }
 
+    /// Estimates mass from the primitive volume and a material density in kg/m³.
+    ///
+    /// Returns `None` for invalid geometry, invalid density, or an unrepresentable result.
+    pub fn mass_kg_at_density(&self, density_kg_m3: f32) -> Option<f32> {
+        if !self.is_valid() || !density_kg_m3.is_finite() || density_kg_m3 <= 0.0 {
+            return None;
+        }
+        let mass_kg = self.volume_m3() * density_kg_m3;
+        (mass_kg.is_finite() && mass_kg > 0.0).then_some(mass_kg)
+    }
+
     fn is_valid(&self) -> bool {
         match self {
             Self::Sphere { radius_m } => radius_m.is_finite() && *radius_m > 0.0,
@@ -571,6 +582,40 @@ mod tests {
             transform: Transform3::default(),
             physics: BodyPhysics::Rigid(RigidBodyProperties::default()),
         }
+    }
+
+    #[test]
+    fn primitive_volumes_match_si_formulas() {
+        let sphere = Geometry::Sphere { radius_m: 1.0 };
+        let cuboid = Geometry::Cuboid {
+            half_extents_m: Vec3::new(1.0, 1.0, 1.0),
+        };
+        let capsule = Geometry::Capsule {
+            radius_m: 1.0,
+            half_height_m: 1.0,
+        };
+
+        let sphere_expected = (4.0 / 3.0) * std::f32::consts::PI;
+        let capsule_expected = (4.0 / 3.0) * std::f32::consts::PI
+            + 2.0 * std::f32::consts::PI;
+
+        assert!((sphere.volume_m3() - sphere_expected).abs() < 1.0e-5);
+        assert!((cuboid.volume_m3() - 8.0).abs() < 1.0e-5);
+        assert!((capsule.volume_m3() - capsule_expected).abs() < 1.0e-5);
+    }
+
+    #[test]
+    fn density_conversion_produces_mass_in_kilograms() {
+        let sphere = Geometry::Sphere { radius_m: 0.1 };
+        let estimated_mass = sphere
+            .mass_kg_at_density(1000.0)
+            .expect("positive geometry and density must produce mass");
+        let expected_mass =
+            (4.0 / 3.0) * std::f32::consts::PI * 0.1_f32.powi(3) * 1000.0;
+
+        assert!((estimated_mass - expected_mass).abs() < 1.0e-5);
+        assert!(sphere.mass_kg_at_density(0.0).is_none());
+        assert!(sphere.mass_kg_at_density(f32::NAN).is_none());
     }
 
     #[test]

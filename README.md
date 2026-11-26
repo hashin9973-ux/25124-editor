@@ -2,63 +2,74 @@
 
 A mouse-first, physics-first organism construction studio built with Rust, Bevy, and Avian.
 
-The editor models **structure**, **physical capabilities**, and **behavior** separately. Movement is intended to emerge from physical simulation, actuators, and feedback controllers—not authored transform keyframes.
+The editor separates three concerns:
+
+- **Structure** — body parts, geometry, physical materials, joints, and actuators.
+- **Capability** — the movement a body can produce through bounded forces and torques.
+- **Behavior** — data-driven controllers and goals that drive actuators using feedback or time-dependent signals.
+
+The intended output is a physical organism definition plus a separate behavior definition. Runtime movement comes from the physics solver, not authored transform keyframes.
 
 ## Current prototype
 
-The first vertical slice provides:
+The current vertical slice provides:
 
-- A Bevy 3D viewport with an Avian physics world and a static ground plane.
-- Left-click placement of rigid spheres, cuboids, and capsules on the ground plane.
-- Fixed, ball-and-socket, hinge, slider, and distance connections between clicked body parts.
-- Powered hinges and sliders with torque-/force-limited Avian motors plus data-driven oscillation controllers.
-- Joint links visualized in the viewport.
-- Physical mass, friction, restitution, and damping applied to the Avian bodies.
-- Separate organism.json and motion.json export through the Save button.
-- An engine-independent organism model crate with validation.
-- A serialization crate with load/save functions and a sample data format.
+- A Bevy 3D viewport with Avian rigid-body simulation and a static ground plane.
+- Mouse orbit (right-drag) and zoom (wheel); left-click is reserved for construction.
+- Primitive placement for rigid spheres, cuboids, and capsules.
+- Fixed, ball-and-socket, hinge, slider, and distance joints.
+- Powered hinge and powered slider tools using Avian angular/linear motors with torque/force limits.
+- An initial oscillator controller that updates motor targets while Avian computes the resulting movement.
+- Joint-link visualization.
+- Primitive volume and material-density-based mass estimation.
+- Per-body friction, restitution, and velocity damping.
+- Separate `organism.json` and `motion.json` export.
+- An engine-independent model crate with ID/reference/physical validation.
+- Validation-aware JSON load and save functions.
 
-This is an early construction prototype, not yet a complete creature editor. It currently creates spheres and passive hinges. Mesh sculpting, soft-body simulation, actuator authoring, controller execution, undo/redo, and a full inspector are not implemented yet.
+This is a construction and physics proof-of-concept, not a complete creature editor. The primitive dimensions, density, friction, damping, motor frequency, amplitude, and limits currently use assisted defaults. The inspector, adjustable joint frames and limits, direct actuator editing, contact-driven gait controllers, freeform mesh modeling, undo/redo, and soft-body runtime are not implemented yet.
 
 ## Run
 
-Requires a Rust toolchain compatible with the 2024 edition and the Bevy 0.20 / Avian 0.8 dependency line.
+Requires Rust with the 2024 edition and dependencies from the Bevy 0.20 / Avian 0.8 line.
 
 ```bash
 cargo run -p organism-editor
 ```
 
-Use the left panel:
+Use the left tool panel:
 
-1. **Place spheres**: left-click the ground to add rigid parts.
-2. **Connect hinge**: click one part, then another part. The editor creates a hinge between them.
-3. **Save JSON**: writes exports/organism.json and exports/motion.json relative to the working directory.
+1. Choose **Add sphere**, **Add cuboid**, or **Add capsule**, then left-click the ground to place a part.
+2. Choose a connection tool, then click two parts to connect them.
+3. Choose a powered hinge or powered slider to create both an Avian motor and a matching actuator/oscillator entry in the data model.
+4. Right-drag to orbit and use the wheel to zoom.
+5. Choose **Save organism + motion JSON** to write `exports/organism.json` and `exports/motion.json`.
 
-The current editor remains an early construction prototype. It does not yet include freeform sculpting, soft-body simulation, actuator authoring, a runtime behavior controller, camera orbit controls, or undo/redo.
+The construction UI is intentionally mouse-operated. Current part sizes and physical parameters are defaults, not an inspector yet.
 
 ## Workspace
 
-- organism-core: engine-independent organism, joints, actuator, and behavior data types.
-- organism-serialization: validation-aware JSON loading and saving.
-- organism-editor: Bevy UI, viewport interactions, and Avian runtime adapter.
+- `crates/organism-core`: engine-independent organism graph, geometry, physical properties, joints, actuators, behaviors, and validation.
+- `crates/serialization`: validation-aware JSON load/save for the two independent documents.
+- `crates/editor`: Bevy user interface, viewport tools, and Avian runtime adapter.
 
 ## Format boundary
 
-The JSON contracts do not contain Bevy Entity values, ECS component types, or Avian-specific structs. The editor translates these stable IDs and physical descriptions into runtime entities and constraints.
+The JSON contracts do not contain Bevy `Entity` values, ECS components, or Avian-specific structs. The editor maps stable model IDs and physical descriptions into runtime entities and constraints.
 
-The two files have distinct responsibilities:
+- `organism.json` stores body parts, primitive geometry, transforms, rigid/soft body properties, joints, and actuator capability limits.
+- `motion.json` stores behaviors, controller kinds, goals, and actuator references.
 
-- organism.json: geometry, transforms, physical properties, joints, and actuator capabilities.
-- motion.json: behavior controllers, goals, and references to actuator IDs.
+Primitive mass estimates use (m = \rho V), with the editor currently using a default density of 1,000 kg/m³. The resulting mass is stored explicitly in the organism file; density is retained as the material assumption. Imported documents preserve their explicit mass.
 
-Soft-body properties are represented in the model format, but the current runtime does not simulate them. The editor must not present a soft-body definition as simulated until a deformable-body backend exists.
+Soft-body properties exist in the data contract for future use, but the current runtime does not simulate deformable bodies. The application must not imply otherwise.
 
-## Validation
+## Local validation
+
+Run these commands on the development machine after pulling the branch:
 
 ```bash
 cargo fmt --all -- --check
 cargo test --workspace
 cargo check --workspace
 ```
-
-The GitHub Actions workflow runs formatting and workspace tests on pushes and pull requests.
