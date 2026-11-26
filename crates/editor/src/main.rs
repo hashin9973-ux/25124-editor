@@ -735,10 +735,8 @@ fn place_body_part(
     };
 
     // Avian expects density here and derives mass/inertia from the collider volume.
-    let mass_properties = MassPropertiesBundle::from_shape(
-        &runtime_geometry.collider,
-        properties.density_kg_m3,
-    );
+    let mass_properties =
+        MassPropertiesBundle::from_shape(&runtime_geometry.collider, properties.density_kg_m3);
     commands.spawn((
         Mesh3d(meshes.add(runtime_geometry.mesh)),
         MeshMaterial3d(materials.add(runtime_geometry.color)),
@@ -1025,7 +1023,6 @@ fn drive_actuator_behaviors(
     }
 }
 
-
 fn apply_selected_sphere_radius(
     selected_part_id: Option<&str>,
     project: &mut DraftProject,
@@ -1036,7 +1033,10 @@ fn apply_selected_sphere_radius(
     inspector_status: &mut Query<&mut Text, With<InspectorStatusLabel>>,
 ) {
     let Some(part_id) = selected_part_id else {
-        set_inspector_status(inspector_status, "Select a sphere before applying a radius.");
+        set_inspector_status(
+            inspector_status,
+            "Select a sphere before applying a radius.",
+        );
         return;
     };
 
@@ -1059,12 +1059,18 @@ fn apply_selected_sphere_radius(
         .iter()
         .position(|part| part.id == part_id)
     else {
-        set_inspector_status(inspector_status, "The selected part is no longer in the organism.");
+        set_inspector_status(
+            inspector_status,
+            "The selected part is no longer in the organism.",
+        );
         return;
     };
 
     let Some((entity, _)) = part_entities.iter().find(|(_, tag)| tag.id == part_id) else {
-        set_inspector_status(inspector_status, "The selected part has no live physics entity.");
+        set_inspector_status(
+            inspector_status,
+            "The selected part has no live physics entity.",
+        );
         return;
     };
 
@@ -1075,12 +1081,18 @@ fn apply_selected_sphere_radius(
     }
 
     let Some(runtime_geometry) = build_runtime_geometry(&updated_part.geometry) else {
-        set_inspector_status(inspector_status, "The edited geometry cannot be represented at runtime.");
+        set_inspector_status(
+            inspector_status,
+            "The edited geometry cannot be represented at runtime.",
+        );
         return;
     };
 
     let BodyPhysics::Rigid(properties) = &updated_part.physics else {
-        set_inspector_status(inspector_status, "Only rigid body parts can be edited with this control.");
+        set_inspector_status(
+            inspector_status,
+            "Only rigid body parts can be edited with this control.",
+        );
         return;
     };
     let mass_properties =
@@ -1109,10 +1121,7 @@ fn apply_selected_sphere_radius(
     info!("Updated {part_id}: sphere radius {radius_m:.4} m, mass {mass_kg:.4} kg");
 }
 
-fn set_inspector_status(
-    labels: &mut Query<&mut Text, With<InspectorStatusLabel>>,
-    message: &str,
-) {
+fn set_inspector_status(labels: &mut Query<&mut Text, With<InspectorStatusLabel>>, message: &str) {
     for mut label in labels.iter_mut() {
         label.0 = message.to_owned();
     }
@@ -1140,7 +1149,7 @@ fn update_part_inspector(
 
     if selection_changed {
         let radius_text = selected_part
-            .and_then(|part| match part.geometry {
+            .and_then(|part| match &part.geometry {
                 Geometry::Sphere { radius_m } => Some(format!("{radius_m:.4}")),
                 _ => None,
             })
@@ -1151,12 +1160,10 @@ fn update_part_inspector(
         }
     }
 
-    let details = selected_part
-        .map(describe_body_part)
-        .unwrap_or_else(|| {
-            "No part selected. Choose Select / inspect part, then click a body in the viewport."
-                .to_owned()
-        });
+    let details = selected_part.map(describe_body_part).unwrap_or_else(|| {
+        "No part selected. Choose Select / inspect part, then click a body in the viewport."
+            .to_owned()
+    });
 
     for mut label in &mut labels {
         label.0.clone_from(&details);

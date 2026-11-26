@@ -17,7 +17,9 @@ impl fmt::Display for PartEditError {
             Self::InvalidRadius => "Radius must be a finite value greater than zero.",
             Self::UnsupportedGeometry => "The selected part is not a sphere.",
             Self::UnsupportedPhysics => "Only rigid body parts can be edited with this control.",
-            Self::InvalidMass => "The edited geometry cannot produce a valid mass at the current density.",
+            Self::InvalidMass => {
+                "The edited geometry cannot produce a valid mass at the current density."
+            },
         };
         formatter.write_str(message)
     }
@@ -32,7 +34,7 @@ pub fn set_sphere_radius(part: &mut BodyPart, radius_m: f32) -> Result<(), PartE
         return Err(PartEditError::InvalidRadius);
     }
 
-    if !matches!(part.geometry, Geometry::Sphere { .. }) {
+    if !matches!(&part.geometry, Geometry::Sphere { .. }) {
         return Err(PartEditError::UnsupportedGeometry);
     }
 
@@ -57,7 +59,7 @@ pub fn set_sphere_radius(part: &mut BodyPart, radius_m: f32) -> Result<(), PartE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use organism_core::{RigidBodyProperties, Transform3};
+    use organism_core::{Organism, RigidBodyProperties, Transform3};
 
     fn sphere_part() -> BodyPart {
         BodyPart {
@@ -82,9 +84,21 @@ mod tests {
         let BodyPhysics::Rigid(properties) = part.physics else {
             panic!("sphere part should remain rigid");
         };
-        let expected_mass =
-            (4.0 / 3.0) * std::f32::consts::PI * 0.4_f32.powi(3) * 950.0;
+        let expected_mass = (4.0 / 3.0) * std::f32::consts::PI * 0.4_f32.powi(3) * 950.0;
         assert!((properties.mass_kg - expected_mass).abs() < 1.0e-5);
+    }
+
+    #[test]
+    fn edited_part_is_encoded_in_the_organism_document() {
+        let mut organism = Organism::new("Editable organism");
+        let mut part = sphere_part();
+        set_sphere_radius(&mut part, 0.35).expect("valid radius edit");
+        organism.parts.push(part);
+
+        let json = organism_serialization::encode_organism(&organism)
+            .expect("edited organism should pass model validation and encode");
+        assert!(json.contains("\"radius_m\": 0.35"));
+        assert!(json.contains("\"mass_kg\""));
     }
 
     #[test]

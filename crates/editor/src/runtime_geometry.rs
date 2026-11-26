@@ -40,7 +40,10 @@ pub fn build_runtime_geometry(geometry: &Geometry) -> Option<RuntimeGeometry> {
                 mesh: Cuboid::from_size(full_size).into(),
                 // Collider::cuboid takes full side lengths, not half-extents.
                 collider: Collider::cuboid(full_size.x, full_size.y, full_size.z),
-                pick_radius: half_extents_m.x.hypot(half_extents_m.y).hypot(half_extents_m.z),
+                pick_radius: half_extents_m
+                    .x
+                    .hypot(half_extents_m.y)
+                    .hypot(half_extents_m.z),
                 ground_offset: half_extents_m.y,
                 color: Color::srgb(0.32, 0.78, 0.58),
             }
