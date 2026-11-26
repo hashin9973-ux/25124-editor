@@ -77,6 +77,29 @@ pub enum Geometry {
 }
 
 impl Geometry {
+    /// Returns the primitive's volume in cubic meters.
+    pub fn volume_m3(&self) -> f32 {
+        match self {
+            Self::Sphere { radius_m } => {
+                (4.0 / 3.0) * std::f32::consts::PI * radius_m.powi(3)
+            }
+            Self::Cuboid { half_extents_m } => {
+                8.0 * half_extents_m.x * half_extents_m.y * half_extents_m.z
+            }
+            Self::Capsule {
+                radius_m,
+                half_height_m,
+            } => {
+                let cylinder = std::f32::consts::PI
+                    * radius_m.powi(2)
+                    * (2.0 * half_height_m);
+                let hemispheres =
+                    (4.0 / 3.0) * std::f32::consts::PI * radius_m.powi(3);
+                cylinder + hemispheres
+            }
+        }
+    }
+
     fn is_valid(&self) -> bool {
         match self {
             Self::Sphere { radius_m } => radius_m.is_finite() && *radius_m > 0.0,
@@ -102,16 +125,24 @@ impl Geometry {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RigidBodyProperties {
     pub mass_kg: f32,
+    /// Material density used by the editor to estimate mass from primitive volume.
+    #[serde(default = "default_tissue_density_kg_m3")]
+    pub density_kg_m3: f32,
     pub friction: f32,
     pub restitution: f32,
     pub linear_damping: f32,
     pub angular_damping: f32,
 }
 
+fn default_tissue_density_kg_m3() -> f32 {
+    1000.0
+}
+
 impl Default for RigidBodyProperties {
     fn default() -> Self {
         Self {
             mass_kg: 1.0,
+            density_kg_m3: default_tissue_density_kg_m3(),
             friction: 0.7,
             restitution: 0.0,
             linear_damping: 0.05,
@@ -281,6 +312,11 @@ impl Organism {
                 BodyPhysics::Rigid(properties) => {
                     if !properties.mass_kg.is_finite() || properties.mass_kg <= 0.0 {
                         errors.push(format!("body part {} has invalid mass", part.id));
+                    }
+                    if !properties.density_kg_m3.is_finite()
+                        || properties.density_kg_m3 <= 0.0
+                    {
+                        errors.push(format!("body part {} has invalid density", part.id));
                     }
                     if !properties.friction.is_finite() || properties.friction < 0.0 {
                         errors.push(format!("body part {} has invalid friction", part.id));

@@ -25,6 +25,7 @@
         "mode": "rigid",
         "properties": {
           "mass_kg": 2.0,
+          "density_kg_m3": 1000.0,
           "friction": 0.7,
           "restitution": 0.0,
           "linear_damping": 0.05,
@@ -48,6 +49,7 @@
         "mode": "rigid",
         "properties": {
           "mass_kg": 0.5,
+          "density_kg_m3": 1000.0,
           "friction": 0.7,
           "restitution": 0.0,
           "linear_damping": 0.05,

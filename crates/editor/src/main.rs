@@ -10,7 +10,7 @@ use organism_serialization::save_project;
 use std::path::Path;
 
 const EXPORT_DIRECTORY: &str = "exports";
-const PART_MASS_KG: f32 = 1.0;
+const PART_DENSITY_KG_M3: f32 = 1000.0;
 const PART_FRICTION: f32 = 0.75;
 const PART_RESTITUTION: f32 = 0.0;
 const PART_LINEAR_DAMPING: f32 = 0.03;
@@ -511,8 +511,14 @@ fn place_body_part(
     let sequence = project.next_part_id;
     project.next_part_id += 1;
     let part_id = format!("part-{sequence:04}");
+    let estimated_mass_kg = geometry.volume_m3() * PART_DENSITY_KG_M3;
+    if !estimated_mass_kg.is_finite() || estimated_mass_kg <= 0.0 {
+        warn!("Cannot place a part with invalid volume or estimated mass");
+        return;
+    }
     let properties = RigidBodyProperties {
-        mass_kg: PART_MASS_KG,
+        mass_kg: estimated_mass_kg,
+        density_kg_m3: PART_DENSITY_KG_M3,
         friction: PART_FRICTION,
         restitution: PART_RESTITUTION,
         linear_damping: PART_LINEAR_DAMPING,
