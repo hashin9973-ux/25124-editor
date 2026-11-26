@@ -76,6 +76,7 @@ enum EditorTool {
     ConnectHinge,
     ConnectPoweredHinge,
     ConnectSlider,
+    ConnectPoweredSlider,
     ConnectDistance,
 }
 
@@ -85,7 +86,7 @@ impl EditorTool {
             Self::ConnectFixed => Some(JointKind::Fixed),
             Self::ConnectBall => Some(JointKind::Ball),
             Self::ConnectHinge | Self::ConnectPoweredHinge => Some(JointKind::Hinge),
-            Self::ConnectSlider => Some(JointKind::Slider),
+            Self::ConnectSlider | Self::ConnectPoweredSlider => Some(JointKind::Slider),
             Self::ConnectDistance => Some(JointKind::Distance),
             Self::PlaceSphere | Self::PlaceCuboid | Self::PlaceCapsule => None,
         }
@@ -93,6 +94,10 @@ impl EditorTool {
 
     fn is_powered_hinge(self) -> bool {
         self == Self::ConnectPoweredHinge
+    }
+
+    fn is_powered_slider(self) -> bool {
+        self == Self::ConnectPoweredSlider
     }
 
     fn geometry(self) -> Option<Geometry> {
@@ -110,6 +115,7 @@ impl EditorTool {
             | Self::ConnectHinge
             | Self::ConnectPoweredHinge
             | Self::ConnectSlider
+            | Self::ConnectPoweredSlider
             | Self::ConnectDistance => None,
         }
     }
@@ -136,6 +142,7 @@ enum EditorButtonAction {
     ConnectHinge,
     ConnectPoweredHinge,
     ConnectSlider,
+    ConnectPoweredSlider,
     ConnectDistance,
     Save,
 }
@@ -301,6 +308,12 @@ fn setup_editor_panel(mut commands: Commands) {
             );
             action_button!(
                 panel,
+                "Connect powered slider",
+                EditorButtonAction::ConnectPoweredSlider,
+                Color::srgb(0.36, 0.25, 0.12)
+            );
+            action_button!(
+                panel,
                 "Connect distance",
                 EditorButtonAction::ConnectDistance,
                 Color::srgb(0.16, 0.19, 0.26)
@@ -355,6 +368,9 @@ fn handle_editor_buttons(
                 *tool = EditorTool::ConnectPoweredHinge
             }
             EditorButtonAction::ConnectSlider => *tool = EditorTool::ConnectSlider,
+            EditorButtonAction::ConnectPoweredSlider => {
+                *tool = EditorTool::ConnectPoweredSlider
+            }
             EditorButtonAction::ConnectDistance => *tool = EditorTool::ConnectDistance,
             EditorButtonAction::Save => {
                 match save_project(
@@ -429,6 +445,7 @@ fn edit_from_viewport(
     connect_body_parts(
         joint_kind,
         tool.is_powered_hinge(),
+        tool.is_powered_slider(),
         ray.origin,
         ray_direction,
         &part_query,
@@ -533,6 +550,7 @@ fn place_body_part(
 fn connect_body_parts(
     kind: JointKind,
     powered_hinge: bool,
+    powered_slider: bool,
     ray_origin: Vec3,
     ray_direction: Vec3,
     part_query: &Query<(Entity, &GlobalTransform, &PartTag)>,
@@ -616,6 +634,26 @@ fn connect_body_parts(
                     .with_hinge_axis(Vec3::Z),
             );
         }
+        JointKind::Slider if powered_slider => {
+            let joint_id = format!("joint-{:04}", project.next_joint_id);
+            let motor = LinearMotor::new(MotorModel::SpringDamper {
+                frequency: 8.0,
+                damping_ratio: 1.0,
+            })
+            .with_target_position(0.0)
+            .with_max_force(20.0);
+            commands.spawn((
+                PrismaticJoint::new(parent_entity, child_entity)
+                    .with_anchor(world_anchor)
+                    .with_slider_axis(Vec3::X)
+                    .with_motor(motor),
+                RuntimeJointTag {
+                    id: joint_id.clone(),
+                },
+            ));
+            commands.entity(parent_entity).insert(SleepingDisabled);
+            commands.entity(child_entity).insert(SleepingDisabled);
+        }
         JointKind::Slider => {
             commands.spawn(
                 PrismaticJoint::new(parent_entity, child_entity)
@@ -663,17 +701,35 @@ fn connect_body_parts(
         rest_length_m,
     });
 
-    if powered_hinge {
+    if powered_hinge || powered_slider {
         let actuator_sequence = project.next_actuator_id;
         project.next_actuator_id += 1;
         let actuator_id = format!("actuator-{actuator_sequence:04}");
+        let (actuator_kind, max_force_n, max_torque_nm, default_amplitude, name) =
+            if powered_hinge {
+                (
+                    ActuatorKind::AngularMotor,
+                    None,
+                    Some(10.0),
+                    0.55,
+                    format!("Powered hinge {actuator_sequence}"),
+                )
+            } else {
+                (
+                    ActuatorKind::LinearMotor,
+                    Some(20.0),
+                    None,
+                    0.2,
+                    format!("Powered slider {actuator_sequence}"),
+                )
+            };
         project.organism.actuators.push(Actuator {
             id: actuator_id.clone(),
-            name: format!("Powered hinge {actuator_sequence}"),
+            name,
             joint_id: joint_id.clone(),
-            kind: ActuatorKind::AngularMotor,
-            max_force_n: None,
-            max_torque_nm: Some(10.0),
+            kind: actuator_kind,
+            max_force_n,
+            max_torque_nm,
         });
         project.motion.behaviors.push(Behavior {
             id: format!("behavior-{actuator_sequence:04}"),
@@ -682,7 +738,7 @@ fn connect_body_parts(
             goals: vec![MotionGoal::OscillateActuator {
                 actuator_id,
                 frequency_hz: 0.5,
-                amplitude: 0.55,
+                amplitude: default_amplitude,
             }],
         });
     }
@@ -692,36 +748,50 @@ fn connect_body_parts(
 fn drive_actuator_behaviors(
     time: Res<Time>,
     project: Res<DraftProject>,
-    mut joints: Query<(&mut RevoluteJoint, &RuntimeJointTag)>,
+    mut angular_joints: Query<(&mut RevoluteJoint, &RuntimeJointTag)>,
+    mut linear_joints: Query<(&mut PrismaticJoint, &RuntimeJointTag)>,
 ) {
     let elapsed = time.elapsed_secs();
-    for (mut joint, runtime_tag) in &mut joints {
-        let Some(actuator) = project
-            .organism
-            .actuators
-            .iter()
-            .find(|actuator| actuator.joint_id == runtime_tag.id)
-        else {
-            continue;
-        };
+    for behavior in &project.motion.behaviors {
+        for goal in &behavior.goals {
+            let MotionGoal::OscillateActuator {
+                actuator_id,
+                frequency_hz,
+                amplitude,
+            } = goal
+            else {
+                continue;
+            };
+            let Some(actuator) = project
+                .organism
+                .actuators
+                .iter()
+                .find(|actuator| actuator.id == *actuator_id)
+            else {
+                continue;
+            };
+            let target = amplitude
+                * (std::f32::consts::TAU * frequency_hz * elapsed).sin();
 
-        let goal = project
-            .motion
-            .behaviors
-            .iter()
-            .flat_map(|behavior| behavior.goals.iter())
-            .find_map(|goal| match goal {
-                MotionGoal::OscillateActuator {
-                    actuator_id,
-                    frequency_hz,
-                    amplitude,
-                } if actuator_id == &actuator.id => Some((*frequency_hz, *amplitude)),
-                _ => None,
-            });
-
-        if let Some((frequency_hz, amplitude)) = goal {
-            joint.motor.target_position =
-                amplitude * (std::f32::consts::TAU * frequency_hz * elapsed).sin();
+            match actuator.kind {
+                ActuatorKind::AngularMotor => {
+                    for (mut joint, tag) in &mut angular_joints {
+                        if tag.id == actuator.joint_id {
+                            joint.motor.target_position = target;
+                            break;
+                        }
+                    }
+                }
+                ActuatorKind::LinearMotor => {
+                    for (mut joint, tag) in &mut linear_joints {
+                        if tag.id == actuator.joint_id {
+                            joint.motor.target_position = target;
+                            break;
+                        }
+                    }
+                }
+                ActuatorKind::MuscleTendon => {}
+            }
         }
     }
 }

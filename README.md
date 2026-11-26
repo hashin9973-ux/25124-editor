@@ -11,7 +11,7 @@ The first vertical slice provides:
 - A Bevy 3D viewport with an Avian physics world and a static ground plane.
 - Left-click placement of rigid spheres, cuboids, and capsules on the ground plane.
 - Fixed, ball-and-socket, hinge, slider, and distance connections between clicked body parts.
-- A powered hinge that adds an Avian angular motor plus a data-driven oscillation controller.
+- Powered hinges and sliders with torque-/force-limited Avian motors plus data-driven oscillation controllers.
 - Joint links visualized in the viewport.
 - Physical mass, friction, restitution, and damping applied to the Avian bodies.
 - Separate organism.json and motion.json export through the Save button.
