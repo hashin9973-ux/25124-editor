@@ -1,0 +1,85 @@
+{
+  "format": "organism",
+  "schema_version": 1,
+  "id": "sample-hinge-creature",
+  "name": "Simple Hinge Creature",
+  "units": {
+    "length": "meter",
+    "mass": "kilogram",
+    "time": "second"
+  },
+  "parts": [
+    {
+      "id": "core",
+      "name": "Core",
+      "geometry": {
+        "shape": "sphere",
+        "radius_m": 0.3
+      },
+      "transform": {
+        "translation_m": { "x": 0.0, "y": 1.0, "z": 0.0 },
+        "rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
+        "scale": { "x": 1.0, "y": 1.0, "z": 1.0 }
+      },
+      "physics": {
+        "mode": "rigid",
+        "properties": {
+          "mass_kg": 2.0,
+          "friction": 0.7,
+          "restitution": 0.0,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05
+        }
+      }
+    },
+    {
+      "id": "appendage",
+      "name": "Appendage",
+      "geometry": {
+        "shape": "sphere",
+        "radius_m": 0.2
+      },
+      "transform": {
+        "translation_m": { "x": 0.0, "y": 0.5, "z": 0.0 },
+        "rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
+        "scale": { "x": 1.0, "y": 1.0, "z": 1.0 }
+      },
+      "physics": {
+        "mode": "rigid",
+        "properties": {
+          "mass_kg": 0.5,
+          "friction": 0.7,
+          "restitution": 0.0,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05
+        }
+      }
+    }
+  ],
+  "joints": [
+    {
+      "id": "core-appendage-hinge",
+      "name": "Core to appendage",
+      "kind": "hinge",
+      "parent_part_id": "core",
+      "child_part_id": "appendage",
+      "anchor_parent_m": { "x": 0.0, "y": -0.25, "z": 0.0 },
+      "anchor_child_m": { "x": 0.0, "y": 0.25, "z": 0.0 },
+      "limits": {
+        "min": -1.0,
+        "max": 1.0,
+        "unit": "radians"
+      }
+    }
+  ],
+  "actuators": [
+    {
+      "id": "appendage-motor",
+      "name": "Appendage motor",
+      "joint_id": "core-appendage-hinge",
+      "kind": "angular_motor",
+      "max_force_n": null,
+      "max_torque_nm": 12.0
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "format": "organism_motion",
+  "schema_version": 1,
+  "organism_id": "sample-hinge-creature",
+  "behaviors": [
+    {
+      "id": "idle-sway",
+      "name": "Idle sway",
+      "controller": "oscillator",
+      "goals": [
+        {
+          "goal": "oscillate_actuator",
+          "actuator_id": "appendage-motor",
+          "frequency_hz": 0.5,
+          "amplitude": 0.35
+        }
+      ]
+    }
+  ]
+}
