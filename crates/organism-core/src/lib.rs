@@ -59,7 +59,12 @@ impl Transform3 {
         self.translation_m.is_finite()
             && self.scale.is_finite()
             && self.rotation_xyzw.iter().all(|value| value.is_finite())
-            && self.rotation_xyzw.iter().map(|value| value * value).sum::<f32>() > f32::EPSILON
+            && self
+                .rotation_xyzw
+                .iter()
+                .map(|value| value * value)
+                .sum::<f32>()
+                > f32::EPSILON
     }
 }
 
@@ -68,10 +73,7 @@ impl Transform3 {
 pub enum Geometry {
     Sphere { radius_m: f32 },
     Cuboid { half_extents_m: Vec3 },
-    Capsule {
-        radius_m: f32,
-        half_height_m: f32,
-    },
+    Capsule { radius_m: f32, half_height_m: f32 },
 }
 
 impl Geometry {
@@ -302,7 +304,10 @@ impl Organism {
                         || properties.damping_ratio < 0.0
                         || properties.resolution < 2
                     {
-                        errors.push(format!("body part {} has invalid soft-body properties", part.id));
+                        errors.push(format!(
+                            "body part {} has invalid soft-body properties",
+                            part.id
+                        ));
                     }
                 }
             }
@@ -316,7 +321,10 @@ impl Organism {
                 errors.push(format!("duplicate joint id: {}", joint.id));
             }
             if joint.parent_part_id == joint.child_part_id {
-                errors.push(format!("joint {} cannot connect a part to itself", joint.id));
+                errors.push(format!(
+                    "joint {} cannot connect a part to itself",
+                    joint.id
+                ));
             }
             if !part_ids.contains(joint.parent_part_id.as_str()) {
                 errors.push(format!(
@@ -386,8 +394,12 @@ pub enum ControllerKind {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "goal", rename_all = "snake_case")]
 pub enum MotionGoal {
-    MoveAtVelocity { target_speed_mps: f32 },
-    MaintainBalance { target_up: Vec3 },
+    MoveAtVelocity {
+        target_speed_mps: f32,
+    },
+    MaintainBalance {
+        target_up: Vec3,
+    },
     OscillateActuator {
         actuator_id: String,
         frequency_hz: f32,
@@ -452,12 +464,16 @@ impl MotionDefinition {
                 match goal {
                     MotionGoal::MoveAtVelocity { target_speed_mps } => {
                         if !target_speed_mps.is_finite() || *target_speed_mps < 0.0 {
-                            errors.push(format!("behavior {} has invalid target speed", behavior.id));
+                            errors
+                                .push(format!("behavior {} has invalid target speed", behavior.id));
                         }
                     }
                     MotionGoal::MaintainBalance { target_up } => {
                         if !target_up.is_finite() {
-                            errors.push(format!("behavior {} has invalid balance direction", behavior.id));
+                            errors.push(format!(
+                                "behavior {} has invalid balance direction",
+                                behavior.id
+                            ));
                         }
                     }
                     MotionGoal::OscillateActuator {
@@ -515,7 +531,11 @@ mod tests {
         organism.parts = vec![sample_part("body"), sample_part("body")];
 
         let errors = organism.validate().expect_err("duplicate IDs must fail");
-        assert!(errors.iter().any(|error| error.contains("duplicate body part id")));
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("duplicate body part id"))
+        );
     }
 
     #[test]
@@ -532,8 +552,18 @@ mod tests {
             limits: None,
         });
 
-        let errors = organism.validate().expect_err("dangling references must fail");
-        assert!(errors.iter().any(|error| error.contains("missing parent part")));
-        assert!(errors.iter().any(|error| error.contains("missing child part")));
+        let errors = organism
+            .validate()
+            .expect_err("dangling references must fail");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("missing parent part"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("missing child part"))
+        );
     }
 }

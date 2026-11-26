@@ -81,7 +81,7 @@ fn setup_scene(
         PointLight {
             intensity: 2_000_000.0,
             range: 80.0,
-            shadows_enabled: true,
+            shadow_maps_enabled: true,
             ..default()
         },
         Transform::from_xyz(4.0, 10.0, 5.0),
@@ -210,10 +210,7 @@ fn setup_editor_panel(mut commands: Commands) {
 }
 
 fn handle_editor_buttons(
-    interactions: Query<
-        (&Interaction, &EditorButtonAction),
-        (Changed<Interaction>, With<Button>),
-    >,
+    interactions: Query<(&Interaction, &EditorButtonAction), (Changed<Interaction>, With<Button>)>,
     mut tool: ResMut<EditorTool>,
     project: Res<DraftProject>,
 ) {
@@ -232,7 +229,11 @@ fn handle_editor_buttons(
                 info!("Editor tool: connect hinge; click two body parts");
             }
             EditorButtonAction::Save => {
-                match save_project(Path::new(EXPORT_DIRECTORY), &project.organism, &project.motion) {
+                match save_project(
+                    Path::new(EXPORT_DIRECTORY),
+                    &project.organism,
+                    &project.motion,
+                ) {
                     Ok(paths) => info!(
                         "Saved organism to {} and motion to {}",
                         paths.organism.display(),
@@ -260,7 +261,10 @@ fn edit_from_viewport(
     if !buttons.just_pressed(MouseButton::Left) {
         return;
     }
-    if ui_interactions.iter().any(|interaction| *interaction != Interaction::None) {
+    if ui_interactions
+        .iter()
+        .any(|interaction| *interaction != Interaction::None)
+    {
         return;
     }
 
