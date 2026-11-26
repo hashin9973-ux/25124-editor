@@ -2,14 +2,14 @@
 //! Left-click remains available to the organism construction tools.
 
 use bevy::app::prelude::*;
-use bevy::camera::{prelude::*, RenderTarget};
+use bevy::camera::{RenderTarget, prelude::*};
 use bevy::camera_controller::pan_orbit_camera::prelude::component::PanOrbitCamera;
 use bevy::ecs::prelude::*;
 use bevy::input::{
     mouse::{MouseScrollUnit, MouseWheel},
     prelude::*,
 };
-use bevy::math::{prelude::*, DVec2, DVec3};
+use bevy::math::{DVec2, DVec3, prelude::*};
 use bevy::picking::hover::Hovered;
 use bevy::picking::pointer::{
     PointerAction, PointerId, PointerInput, PointerInteraction, PointerLocation, PointerMap,

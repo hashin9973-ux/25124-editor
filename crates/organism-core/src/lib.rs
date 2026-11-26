@@ -80,9 +80,7 @@ impl Geometry {
     /// Returns the primitive's volume in cubic meters.
     pub fn volume_m3(&self) -> f32 {
         match self {
-            Self::Sphere { radius_m } => {
-                (4.0 / 3.0) * std::f32::consts::PI * radius_m.powi(3)
-            }
+            Self::Sphere { radius_m } => (4.0 / 3.0) * std::f32::consts::PI * radius_m.powi(3),
             Self::Cuboid { half_extents_m } => {
                 8.0 * half_extents_m.x * half_extents_m.y * half_extents_m.z
             }
@@ -90,11 +88,8 @@ impl Geometry {
                 radius_m,
                 half_height_m,
             } => {
-                let cylinder = std::f32::consts::PI
-                    * radius_m.powi(2)
-                    * (2.0 * half_height_m);
-                let hemispheres =
-                    (4.0 / 3.0) * std::f32::consts::PI * radius_m.powi(3);
+                let cylinder = std::f32::consts::PI * radius_m.powi(2) * (2.0 * half_height_m);
+                let hemispheres = (4.0 / 3.0) * std::f32::consts::PI * radius_m.powi(3);
                 cylinder + hemispheres
             }
         }
@@ -324,9 +319,7 @@ impl Organism {
                     if !properties.mass_kg.is_finite() || properties.mass_kg <= 0.0 {
                         errors.push(format!("body part {} has invalid mass", part.id));
                     }
-                    if !properties.density_kg_m3.is_finite()
-                        || properties.density_kg_m3 <= 0.0
-                    {
+                    if !properties.density_kg_m3.is_finite() || properties.density_kg_m3 <= 0.0 {
                         errors.push(format!("body part {} has invalid density", part.id));
                     }
                     if !properties.friction.is_finite() || properties.friction < 0.0 {
@@ -408,7 +401,10 @@ impl Organism {
                 }
             }
             if joint.kind == JointKind::Distance && joint.rest_length_m.is_none() {
-                errors.push(format!("distance joint {} is missing its rest length", joint.id));
+                errors.push(format!(
+                    "distance joint {} is missing its rest length",
+                    joint.id
+                ));
             }
         }
 
@@ -596,8 +592,7 @@ mod tests {
         };
 
         let sphere_expected = (4.0 / 3.0) * std::f32::consts::PI;
-        let capsule_expected = (4.0 / 3.0) * std::f32::consts::PI
-            + 2.0 * std::f32::consts::PI;
+        let capsule_expected = (4.0 / 3.0) * std::f32::consts::PI + 2.0 * std::f32::consts::PI;
 
         assert!((sphere.volume_m3() - sphere_expected).abs() < 1.0e-5);
         assert!((cuboid.volume_m3() - 8.0).abs() < 1.0e-5);
@@ -610,8 +605,7 @@ mod tests {
         let estimated_mass = sphere
             .mass_kg_at_density(1000.0)
             .expect("positive geometry and density must produce mass");
-        let expected_mass =
-            (4.0 / 3.0) * std::f32::consts::PI * 0.1_f32.powi(3) * 1000.0;
+        let expected_mass = (4.0 / 3.0) * std::f32::consts::PI * 0.1_f32.powi(3) * 1000.0;
 
         assert!((estimated_mass - expected_mass).abs() < 1.0e-5);
         assert!(sphere.mass_kg_at_density(0.0).is_none());
@@ -652,8 +646,14 @@ mod tests {
             rest_length_m: None,
         });
 
-        let errors = organism.validate().expect_err("distance rest length is required");
-        assert!(errors.iter().any(|error| error.contains("missing its rest length")));
+        let errors = organism
+            .validate()
+            .expect_err("distance rest length is required");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("missing its rest length"))
+        );
     }
 
     #[test]

@@ -4,7 +4,7 @@ use avian3d::prelude::*;
 use bevy::camera_controller::pan_orbit_camera::prelude::*;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
-use bevy::ui_widgets::{observe, Activate, Button};
+use bevy::ui_widgets::{Activate, Button, observe};
 use bevy::window::PrimaryWindow;
 use camera_controls::CameraControlsPlugin;
 use organism_core::{
@@ -456,8 +456,7 @@ fn update_placement_settings_label(
     for mut label in &mut labels {
         label.0 = format!(
             "Size {:.2}× · Density {:.0} kg/m³",
-            placement.size_scale,
-            placement.density_kg_m3
+            placement.size_scale, placement.density_kg_m3
         );
     }
 }
@@ -597,8 +596,7 @@ fn place_body_part(
             Color::srgb(0.24, 0.68, 0.92),
         ),
         Geometry::Cuboid { half_extents_m } => {
-            let half_extents =
-                Vec3::new(half_extents_m.x, half_extents_m.y, half_extents_m.z);
+            let half_extents = Vec3::new(half_extents_m.x, half_extents_m.y, half_extents_m.z);
             (
                 meshes.add(Cuboid::from_size(half_extents * 2.0)),
                 Collider::cuboid(half_extents.x, half_extents.y, half_extents.z),
@@ -641,8 +639,7 @@ fn place_body_part(
     };
 
     // Avian expects density here and derives mass/inertia from the collider volume.
-    let mass_properties =
-        MassPropertiesBundle::from_shape(&collider, properties.density_kg_m3);
+    let mass_properties = MassPropertiesBundle::from_shape(&collider, properties.density_kg_m3);
     commands.spawn((
         Mesh3d(mesh),
         MeshMaterial3d(materials.add(color)),
@@ -726,9 +723,8 @@ fn connect_body_parts(
             commands.spawn(FixedJoint::new(parent_entity, child_entity).with_anchor(world_anchor));
         }
         JointKind::Ball => {
-            commands.spawn(
-                SphericalJoint::new(parent_entity, child_entity).with_anchor(world_anchor),
-            );
+            commands
+                .spawn(SphericalJoint::new(parent_entity, child_entity).with_anchor(world_anchor));
         }
         JointKind::Hinge if powered_hinge => {
             let joint_id = format!("joint-{:04}", project.next_joint_id);
@@ -828,24 +824,24 @@ fn connect_body_parts(
         let actuator_sequence = project.next_actuator_id;
         project.next_actuator_id += 1;
         let actuator_id = format!("actuator-{actuator_sequence:04}");
-        let (actuator_kind, max_force_n, max_torque_nm, default_amplitude, name) =
-            if powered_hinge {
-                (
-                    ActuatorKind::AngularMotor,
-                    None,
-                    Some(10.0),
-                    0.55,
-                    format!("Powered hinge {actuator_sequence}"),
-                )
-            } else {
-                (
-                    ActuatorKind::LinearMotor,
-                    Some(20.0),
-                    None,
-                    0.2,
-                    format!("Powered slider {actuator_sequence}"),
-                )
-            };
+        let (actuator_kind, max_force_n, max_torque_nm, default_amplitude, name) = if powered_hinge
+        {
+            (
+                ActuatorKind::AngularMotor,
+                None,
+                Some(10.0),
+                0.55,
+                format!("Powered hinge {actuator_sequence}"),
+            )
+        } else {
+            (
+                ActuatorKind::LinearMotor,
+                Some(20.0),
+                None,
+                0.2,
+                format!("Powered slider {actuator_sequence}"),
+            )
+        };
         project.organism.actuators.push(Actuator {
             id: actuator_id.clone(),
             name,
@@ -893,8 +889,7 @@ fn drive_actuator_behaviors(
             else {
                 continue;
             };
-            let target = amplitude
-                * (std::f32::consts::TAU * frequency_hz * elapsed).sin();
+            let target = amplitude * (std::f32::consts::TAU * frequency_hz * elapsed).sin();
 
             match actuator.kind {
                 ActuatorKind::AngularMotor => {
