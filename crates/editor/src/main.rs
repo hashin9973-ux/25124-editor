@@ -1,10 +1,13 @@
 mod camera_controls;
+mod part_editing;
+mod runtime_geometry;
 
 use avian3d::prelude::*;
 use bevy::camera_controller::pan_orbit_camera::prelude::*;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
-use bevy::ui_widgets::{Activate, Button, observe};
+use bevy::text::EditableText;
+use bevy::ui_widgets::{Activate, Button, TextInput, observe};
 use bevy::window::PrimaryWindow;
 use camera_controls::CameraControlsPlugin;
 use organism_core::{
@@ -13,6 +16,8 @@ use organism_core::{
     Vec3 as DataVec3,
 };
 use organism_serialization::save_project;
+use part_editing::set_sphere_radius;
+use runtime_geometry::build_runtime_geometry;
 use std::path::Path;
 
 const EXPORT_DIRECTORY: &str = "exports";
@@ -70,6 +75,12 @@ struct PlacementSettingsLabel;
 
 #[derive(Component)]
 struct PartInspectorLabel;
+
+#[derive(Component)]
+struct SphereRadiusInput;
+
+#[derive(Component)]
+struct InspectorStatusLabel;
 
 /// Selection is stored by stable model ID rather than by a transient ECS entity.
 #[derive(Resource, Default)]
@@ -197,6 +208,7 @@ enum EditorButtonAction {
     SetDensityMedium,
     SetDensityDense,
     Save,
+    ApplySphereRadius,
 }
 
 fn setup_scene(
@@ -321,6 +333,47 @@ fn setup_editor_panel(mut commands: Commands) {
                 },
                 TextColor(Color::srgb(0.88, 0.86, 0.72)),
                 PartInspectorLabel,
+            ));
+            panel.spawn((
+                Text::new("SPHERE RADIUS · METERS"),
+                TextFont {
+                    font_size: FontSize::Px(10.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.72, 0.76, 0.82)),
+            ));
+            panel.spawn((
+                TextInput,
+                EditableText::new(""),
+                Node {
+                    width: Val::Px(236.0),
+                    height: Val::Px(34.0),
+                    padding: UiRect::axes(Val::Px(9.0), Val::Px(5.0)),
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.1, 0.12, 0.16)),
+                TextFont {
+                    font_size: FontSize::Px(13.0),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                SphereRadiusInput,
+            ));
+            action_button!(
+                panel,
+                "Apply sphere radius",
+                EditorButtonAction::ApplySphereRadius,
+                Color::srgb(0.23, 0.3, 0.42)
+            );
+            panel.spawn((
+                Text::new("Select a sphere to edit its radius."),
+                TextFont {
+                    font_size: FontSize::Px(10.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.82, 0.78, 0.57)),
+                InspectorStatusLabel,
             ));
 
             panel.spawn((
@@ -505,7 +558,13 @@ fn handle_editor_button_activated(
     actions: Query<&EditorButtonAction>,
     mut tool: ResMut<EditorTool>,
     mut placement: ResMut<PlacementSettings>,
-    project: Res<DraftProject>,
+    mut project: ResMut<DraftProject>,
+    selection: Res<PartSelection>,
+    radius_inputs: Query<&EditableText, With<SphereRadiusInput>>,
+    part_entities: Query<(Entity, &PartTag)>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut inspector_status: Query<&mut Text, With<InspectorStatusLabel>>,
 ) {
     let Ok(action) = actions.get(activate.entity) else {
         return;
@@ -529,6 +588,17 @@ fn handle_editor_button_activated(
         EditorButtonAction::SetDensityLight => placement.density_kg_m3 = 300.0,
         EditorButtonAction::SetDensityMedium => placement.density_kg_m3 = 1000.0,
         EditorButtonAction::SetDensityDense => placement.density_kg_m3 = 1800.0,
+        EditorButtonAction::ApplySphereRadius => {
+            apply_selected_sphere_radius(
+                selection.part_id.as_deref(),
+                &mut project,
+                &radius_inputs,
+                &part_entities,
+                &mut commands,
+                &mut meshes,
+                &mut inspector_status,
+            );
+        }
         EditorButtonAction::Save => {
             match save_project(
                 Path::new(EXPORT_DIRECTORY),
@@ -642,41 +712,12 @@ fn place_body_part(
     }
     let ground_point = ray_origin + ray_direction * ground_distance;
 
-    let (mesh, collider, pick_radius, ground_offset, color) = match &geometry {
-        Geometry::Sphere { radius_m } => (
-            meshes.add(Sphere::new(*radius_m)),
-            Collider::sphere(*radius_m),
-            *radius_m,
-            *radius_m,
-            Color::srgb(0.24, 0.68, 0.92),
-        ),
-        Geometry::Cuboid { half_extents_m } => {
-            let half_extents = Vec3::new(half_extents_m.x, half_extents_m.y, half_extents_m.z);
-            (
-                meshes.add(Cuboid::from_size(half_extents * 2.0)),
-                Collider::cuboid(half_extents.x, half_extents.y, half_extents.z),
-                half_extents.length(),
-                half_extents.y,
-                Color::srgb(0.32, 0.78, 0.58),
-            )
-        }
-        Geometry::Capsule {
-            radius_m,
-            half_height_m,
-        } => {
-            let full_segment_length = half_height_m * 2.0;
-            let outer_radius = radius_m + half_height_m;
-            (
-                meshes.add(Capsule3d::new(*radius_m, full_segment_length)),
-                Collider::capsule(*radius_m, full_segment_length),
-                outer_radius,
-                outer_radius,
-                Color::srgb(0.92, 0.63, 0.28),
-            )
-        }
+    let Some(runtime_geometry) = build_runtime_geometry(&geometry) else {
+        warn!("Cannot construct a runtime shape from invalid geometry");
+        return;
     };
 
-    let position = ground_point + Vec3::Y * ground_offset;
+    let position = ground_point + Vec3::Y * runtime_geometry.ground_offset;
     let sequence = project.next_part_id;
     project.next_part_id += 1;
     let part_id = format!("part-{sequence:04}");
@@ -694,13 +735,16 @@ fn place_body_part(
     };
 
     // Avian expects density here and derives mass/inertia from the collider volume.
-    let mass_properties = MassPropertiesBundle::from_shape(&collider, properties.density_kg_m3);
+    let mass_properties = MassPropertiesBundle::from_shape(
+        &runtime_geometry.collider,
+        properties.density_kg_m3,
+    );
     commands.spawn((
-        Mesh3d(mesh),
-        MeshMaterial3d(materials.add(color)),
+        Mesh3d(meshes.add(runtime_geometry.mesh)),
+        MeshMaterial3d(materials.add(runtime_geometry.color)),
         Transform::from_translation(position),
         RigidBody::Dynamic,
-        collider,
+        runtime_geometry.collider,
         mass_properties,
         Friction::new(properties.friction),
         Restitution::new(properties.restitution),
@@ -708,7 +752,7 @@ fn place_body_part(
         AngularDamping(properties.angular_damping),
         PartTag {
             id: part_id.clone(),
-            pick_radius,
+            pick_radius: runtime_geometry.pick_radius,
         },
     ));
 
@@ -981,25 +1025,133 @@ fn drive_actuator_behaviors(
     }
 }
 
+
+fn apply_selected_sphere_radius(
+    selected_part_id: Option<&str>,
+    project: &mut DraftProject,
+    radius_inputs: &Query<&EditableText, With<SphereRadiusInput>>,
+    part_entities: &Query<(Entity, &PartTag)>,
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    inspector_status: &mut Query<&mut Text, With<InspectorStatusLabel>>,
+) {
+    let Some(part_id) = selected_part_id else {
+        set_inspector_status(inspector_status, "Select a sphere before applying a radius.");
+        return;
+    };
+
+    let Some(input) = radius_inputs.iter().next() else {
+        set_inspector_status(inspector_status, "The radius input is unavailable.");
+        return;
+    };
+
+    let radius_m = match input.value().to_string().trim().parse::<f32>() {
+        Ok(radius) => radius,
+        Err(_) => {
+            set_inspector_status(inspector_status, "Enter a valid radius in meters.");
+            return;
+        }
+    };
+
+    let Some(part_index) = project
+        .organism
+        .parts
+        .iter()
+        .position(|part| part.id == part_id)
+    else {
+        set_inspector_status(inspector_status, "The selected part is no longer in the organism.");
+        return;
+    };
+
+    let Some((entity, _)) = part_entities.iter().find(|(_, tag)| tag.id == part_id) else {
+        set_inspector_status(inspector_status, "The selected part has no live physics entity.");
+        return;
+    };
+
+    let mut updated_part = project.organism.parts[part_index].clone();
+    if let Err(error) = set_sphere_radius(&mut updated_part, radius_m) {
+        set_inspector_status(inspector_status, &error.to_string());
+        return;
+    }
+
+    let Some(runtime_geometry) = build_runtime_geometry(&updated_part.geometry) else {
+        set_inspector_status(inspector_status, "The edited geometry cannot be represented at runtime.");
+        return;
+    };
+
+    let BodyPhysics::Rigid(properties) = &updated_part.physics else {
+        set_inspector_status(inspector_status, "Only rigid body parts can be edited with this control.");
+        return;
+    };
+    let mass_properties =
+        MassPropertiesBundle::from_shape(&runtime_geometry.collider, properties.density_kg_m3);
+
+    commands.entity(entity).insert((
+        Mesh3d(meshes.add(runtime_geometry.mesh)),
+        runtime_geometry.collider,
+        mass_properties,
+        Friction::new(properties.friction),
+        Restitution::new(properties.restitution),
+        LinearDamping(properties.linear_damping),
+        AngularDamping(properties.angular_damping),
+        PartTag {
+            id: part_id.to_owned(),
+            pick_radius: runtime_geometry.pick_radius,
+        },
+    ));
+
+    let mass_kg = properties.mass_kg;
+    project.organism.parts[part_index] = updated_part;
+    set_inspector_status(
+        inspector_status,
+        &format!("Applied radius {radius_m:.4} m · mass {mass_kg:.4} kg."),
+    );
+    info!("Updated {part_id}: sphere radius {radius_m:.4} m, mass {mass_kg:.4} kg");
+}
+
+fn set_inspector_status(
+    labels: &mut Query<&mut Text, With<InspectorStatusLabel>>,
+    message: &str,
+) {
+    for mut label in labels.iter_mut() {
+        label.0 = message.to_owned();
+    }
+}
+
 fn update_part_inspector(
     selection: Res<PartSelection>,
     project: Res<DraftProject>,
     mut labels: Query<&mut Text, With<PartInspectorLabel>>,
+    mut radius_inputs: Query<&mut EditableText, With<SphereRadiusInput>>,
 ) {
-    if !selection.is_changed() && !project.is_changed() {
+    let selection_changed = selection.is_changed();
+    let project_changed = project.is_changed();
+    if !selection_changed && !project_changed {
         return;
     }
 
-    let details = selection
-        .part_id
-        .as_ref()
-        .and_then(|part_id| {
-            project
-                .organism
-                .parts
-                .iter()
-                .find(|part| part.id == *part_id)
-        })
+    let selected_part = selection.part_id.as_ref().and_then(|part_id| {
+        project
+            .organism
+            .parts
+            .iter()
+            .find(|part| part.id == *part_id)
+    });
+
+    if selection_changed {
+        let radius_text = selected_part
+            .and_then(|part| match part.geometry {
+                Geometry::Sphere { radius_m } => Some(format!("{radius_m:.4}")),
+                _ => None,
+            })
+            .unwrap_or_default();
+
+        for mut input in &mut radius_inputs {
+            *input = EditableText::new(&radius_text);
+        }
+    }
+
+    let details = selected_part
         .map(describe_body_part)
         .unwrap_or_else(|| {
             "No part selected. Choose Select / inspect part, then click a body in the viewport."
