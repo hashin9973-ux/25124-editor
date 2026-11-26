@@ -1,4 +1,5 @@
 use avian3d::prelude::*;
+use bevy::camera_controller::pan_orbit_camera::prelude::*;
 use bevy::prelude::*;
 use organism_core::{
     Actuator, ActuatorKind, Behavior, BodyPart, BodyPhysics, ControllerKind, Geometry, Joint,
@@ -17,7 +18,12 @@ const PART_ANGULAR_DAMPING: f32 = 0.05;
 
 fn main() {
     App::new()
-        .add_plugins((DefaultPlugins, PhysicsPlugins::default()))
+        .add_plugins((
+            DefaultPlugins,
+            PhysicsPlugins::default(),
+            MeshPickingPlugin,
+            DefaultPanOrbitCameraPlugins,
+        ))
         .insert_resource(ClearColor(Color::srgb(0.025, 0.03, 0.045)))
         .init_resource::<DraftProject>()
         .init_resource::<EditorTool>()
@@ -162,6 +168,14 @@ fn setup_scene(
 
     commands.spawn((
         Camera3d::default(),
+        PanOrbitCamera {
+            enabled_motion: EnabledMotion {
+                pan: false,
+                orbit: true,
+                zoom: true,
+            },
+            ..default()
+        },
         Transform::from_xyz(9.0, 8.0, 12.0).looking_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
     ));
 }
