@@ -325,6 +325,15 @@ fn setup_editor_panel(mut commands: Commands) {
 
             panel.spawn((
                 Text::new("BODY CONSTRUCTION"),
+                TextFont {
+                    font_size: FontSize::Px(10.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.45, 0.74, 0.95)),
+            ));
+            action_button!(
+                panel,
+                "Add sphere",
                 EditorButtonAction::PlaceSphere,
                 Color::srgb(0.12, 0.2, 0.3)
             );
