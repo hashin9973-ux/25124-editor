@@ -22,6 +22,7 @@ The current vertical slice provides:
 - An initial oscillator controller that updates motor targets while Avian computes the resulting movement.
 - Joint-link visualization.
 - Primitive volume and material-density-based mass estimation.
+- Mouse-selectable size presets (small, standard, large) and density presets (300, 1,000, 1,800 kg/m³).
 - Per-body friction, restitution, and velocity damping.
 - Separate `organism.json` and `motion.json` export.
 - An engine-independent model crate with ID/reference/physical validation.
@@ -45,7 +46,7 @@ Use the left tool panel:
 4. Right-drag to orbit and use the wheel to zoom.
 5. Choose **Save organism + motion JSON** to write `exports/organism.json` and `exports/motion.json`.
 
-The construction UI is intentionally mouse-operated. Current part sizes and physical parameters are defaults, not an inspector yet.
+The construction UI is intentionally mouse-operated. Size and density can be selected from assisted presets. Friction, damping, and motor properties still use starter defaults; arbitrary numeric editing and a full inspector are not implemented yet.
 
 ## Workspace
 
