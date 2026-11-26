@@ -27,7 +27,7 @@ The current vertical slice provides:
 - An engine-independent model crate with ID/reference/physical validation.
 - Validation-aware JSON load and save functions.
 
-This is a construction and physics proof-of-concept, not a complete creature editor. The primitive dimensions, density, friction, damping, motor frequency, amplitude, and limits currently use assisted defaults. The inspector, adjustable joint frames and limits, direct actuator editing, contact-driven gait controllers, freeform mesh modeling, undo/redo, and soft-body runtime are not implemented yet.
+This is a construction and physics proof-of-concept, not a complete creature editor. Primitive dimensions and density currently use assisted size/material presets; friction, damping, motor frequency, amplitude, and motor limits still use defaults. The inspector, adjustable joint frames and limits, direct actuator editing, contact-driven gait controllers, freeform mesh modeling, undo/redo, and soft-body runtime are not implemented yet.
 
 ## Run
 

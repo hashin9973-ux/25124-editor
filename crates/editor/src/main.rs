@@ -10,7 +10,6 @@ use organism_serialization::save_project;
 use std::path::Path;
 
 const EXPORT_DIRECTORY: &str = "exports";
-const PART_DENSITY_KG_M3: f32 = 1000.0;
 const PART_FRICTION: f32 = 0.75;
 const PART_RESTITUTION: f32 = 0.0;
 const PART_LINEAR_DAMPING: f32 = 0.03;
@@ -27,6 +26,7 @@ fn main() {
         .insert_resource(ClearColor(Color::srgb(0.025, 0.03, 0.045)))
         .init_resource::<DraftProject>()
         .init_resource::<EditorTool>()
+        .init_resource::<PlacementSettings>()
         .add_systems(Startup, (setup_scene, setup_editor_panel))
         .add_systems(
             Update,
@@ -35,10 +35,29 @@ fn main() {
                 edit_from_viewport,
                 draw_joint_links,
                 drive_actuator_behaviors,
+                update_placement_settings_label,
             ),
         )
         .run();
 }
+
+#[derive(Resource)]
+struct PlacementSettings {
+    size_scale: f32,
+    density_kg_m3: f32,
+}
+
+impl Default for PlacementSettings {
+    fn default() -> Self {
+        Self {
+            size_scale: 1.0,
+            density_kg_m3: 1000.0,
+        }
+    }
+}
+
+#[derive(Component)]
+struct PlacementSettingsLabel;
 
 #[derive(Resource)]
 struct DraftProject {
@@ -100,15 +119,21 @@ impl EditorTool {
         self == Self::ConnectPoweredSlider
     }
 
-    fn geometry(self) -> Option<Geometry> {
+    fn geometry(self, size_scale: f32) -> Option<Geometry> {
         match self {
-            Self::PlaceSphere => Some(Geometry::Sphere { radius_m: 0.3 }),
+            Self::PlaceSphere => Some(Geometry::Sphere {
+                radius_m: 0.3 * size_scale,
+            }),
             Self::PlaceCuboid => Some(Geometry::Cuboid {
-                half_extents_m: DataVec3::new(0.25, 0.25, 0.25),
+                half_extents_m: DataVec3::new(
+                    0.25 * size_scale,
+                    0.25 * size_scale,
+                    0.25 * size_scale,
+                ),
             }),
             Self::PlaceCapsule => Some(Geometry::Capsule {
-                radius_m: 0.2,
-                half_height_m: 0.45,
+                radius_m: 0.2 * size_scale,
+                half_height_m: 0.45 * size_scale,
             }),
             Self::ConnectFixed
             | Self::ConnectBall
@@ -144,6 +169,12 @@ enum EditorButtonAction {
     ConnectSlider,
     ConnectPoweredSlider,
     ConnectDistance,
+    SetSizeSmall,
+    SetSizeStandard,
+    SetSizeLarge,
+    SetDensityLight,
+    SetDensityMedium,
+    SetDensityDense,
     Save,
 }
 
@@ -223,7 +254,12 @@ fn setup_editor_panel(mut commands: Commands) {
                 position_type: PositionType::Absolute,
                 top: Val::Px(16.0),
                 left: Val::Px(16.0),
-                width: Val::Px(260.0),
+                width: Val::Px(270.0),
+                height: Val::Vh(90.0),
+                overflow: Overflow {
+                    x: OverflowAxis::Hidden,
+                    y: OverflowAxis::Scroll,
+                },
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(7.0),
                 padding: UiRect::all(Val::Px(12.0)),
@@ -267,6 +303,60 @@ fn setup_editor_panel(mut commands: Commands) {
                 EditorButtonAction::PlaceCapsule,
                 Color::srgb(0.12, 0.2, 0.3)
             );
+
+            panel.spawn((
+                Text::new("ASSISTED DEFAULTS"),
+                TextFont {
+                    font_size: FontSize::Px(10.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.45, 0.74, 0.95)),
+            ));
+            action_button!(
+                panel,
+                "Small parts",
+                EditorButtonAction::SetSizeSmall,
+                Color::srgb(0.18, 0.2, 0.27)
+            );
+            action_button!(
+                panel,
+                "Standard parts",
+                EditorButtonAction::SetSizeStandard,
+                Color::srgb(0.18, 0.2, 0.27)
+            );
+            action_button!(
+                panel,
+                "Large parts",
+                EditorButtonAction::SetSizeLarge,
+                Color::srgb(0.18, 0.2, 0.27)
+            );
+            action_button!(
+                panel,
+                "Light material · 300 kg/m³",
+                EditorButtonAction::SetDensityLight,
+                Color::srgb(0.18, 0.2, 0.27)
+            );
+            action_button!(
+                panel,
+                "Medium material · 1,000 kg/m³",
+                EditorButtonAction::SetDensityMedium,
+                Color::srgb(0.18, 0.2, 0.27)
+            );
+            action_button!(
+                panel,
+                "Dense material · 1,800 kg/m³",
+                EditorButtonAction::SetDensityDense,
+                Color::srgb(0.18, 0.2, 0.27)
+            );
+            panel.spawn((
+                Text::new("Size 1.00× · Density 1,000 kg/m³"),
+                TextFont {
+                    font_size: FontSize::Px(11.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.85, 0.83, 0.64)),
+                PlacementSettingsLabel,
+            ));
 
             panel.spawn((
                 Text::new("CONNECTIONS"),
@@ -348,9 +438,27 @@ fn setup_editor_panel(mut commands: Commands) {
         });
 }
 
+fn update_placement_settings_label(
+    placement: Res<PlacementSettings>,
+    mut labels: Query<&mut Text, With<PlacementSettingsLabel>>,
+) {
+    if !placement.is_changed() {
+        return;
+    }
+
+    for mut label in &mut labels {
+        label.0 = format!(
+            "Size {:.2}× · Density {:.0} kg/m³",
+            placement.size_scale,
+            placement.density_kg_m3
+        );
+    }
+}
+
 fn handle_editor_buttons(
     interactions: Query<(&Interaction, &EditorButtonAction), (Changed<Interaction>, With<Button>)>,
     mut tool: ResMut<EditorTool>,
+    mut placement: ResMut<PlacementSettings>,
     project: Res<DraftProject>,
 ) {
     for (interaction, action) in &interactions {
@@ -373,6 +481,12 @@ fn handle_editor_buttons(
                 *tool = EditorTool::ConnectPoweredSlider
             }
             EditorButtonAction::ConnectDistance => *tool = EditorTool::ConnectDistance,
+            EditorButtonAction::SetSizeSmall => placement.size_scale = 0.5,
+            EditorButtonAction::SetSizeStandard => placement.size_scale = 1.0,
+            EditorButtonAction::SetSizeLarge => placement.size_scale = 2.0,
+            EditorButtonAction::SetDensityLight => placement.density_kg_m3 = 300.0,
+            EditorButtonAction::SetDensityMedium => placement.density_kg_m3 = 1000.0,
+            EditorButtonAction::SetDensityDense => placement.density_kg_m3 = 1800.0,
             EditorButtonAction::Save => {
                 match save_project(
                     Path::new(EXPORT_DIRECTORY),
@@ -402,6 +516,7 @@ fn edit_from_viewport(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut project: ResMut<DraftProject>,
     tool: Res<EditorTool>,
+    placement: Res<PlacementSettings>,
 ) {
     if !buttons.just_pressed(MouseButton::Left) {
         return;
@@ -427,7 +542,7 @@ fn edit_from_viewport(
     };
     let ray_direction = ray.direction.as_vec3();
 
-    if let Some(geometry) = tool.geometry() {
+    if let Some(geometry) = tool.geometry(placement.size_scale) {
         place_body_part(
             geometry,
             ray.origin,
@@ -436,6 +551,7 @@ fn edit_from_viewport(
             &mut meshes,
             &mut materials,
             &mut project,
+            placement.density_kg_m3,
         );
         return;
     }
@@ -463,6 +579,7 @@ fn place_body_part(
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     project: &mut DraftProject,
+    density_kg_m3: f32,
 ) {
     if ray_direction.y.abs() < 1.0e-5 {
         return;
@@ -512,13 +629,13 @@ fn place_body_part(
     let sequence = project.next_part_id;
     project.next_part_id += 1;
     let part_id = format!("part-{sequence:04}");
-    let Some(estimated_mass_kg) = geometry.mass_kg_at_density(PART_DENSITY_KG_M3) else {
+    let Some(estimated_mass_kg) = geometry.mass_kg_at_density(density_kg_m3) else {
         warn!("Cannot place a part with invalid geometry or estimated mass");
         return;
     };
     let properties = RigidBodyProperties {
         mass_kg: estimated_mass_kg,
-        density_kg_m3: PART_DENSITY_KG_M3,
+        density_kg_m3,
         friction: PART_FRICTION,
         restitution: PART_RESTITUTION,
         linear_damping: PART_LINEAR_DAMPING,
