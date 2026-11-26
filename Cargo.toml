@@ -14,7 +14,7 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-bevy = "0.20.0"
+bevy = { version = "0.20.0", features = ["bevy_camera_controller", "pan_orbit_camera"] }
 avian3d = { version = "0.8.0", default-features = false, features = ["3d", "parry-f32", "xpbd_joints", "debug-plugin"] }
 organism-core = { path = "crates/organism-core" }
 organism-serialization = { path = "crates/serialization" }

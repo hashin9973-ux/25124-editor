@@ -1,6 +1,12 @@
+mod camera_controls;
+
 use avian3d::prelude::*;
 use bevy::camera_controller::pan_orbit_camera::prelude::*;
+use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
+use bevy::ui_widgets::{observe, Activate, Button};
+use bevy::window::PrimaryWindow;
+use camera_controls::CameraControlsPlugin;
 use organism_core::{
     Actuator, ActuatorKind, Behavior, BodyPart, BodyPhysics, ControllerKind, Geometry, Joint,
     JointKind, MotionDefinition, MotionGoal, Organism, RigidBodyProperties, Transform3,
@@ -22,6 +28,7 @@ fn main() {
             PhysicsPlugins::default(),
             MeshPickingPlugin,
             DefaultPanOrbitCameraPlugins,
+            CameraControlsPlugin,
         ))
         .insert_resource(ClearColor(Color::srgb(0.025, 0.03, 0.045)))
         .init_resource::<DraftProject>()
@@ -31,7 +38,6 @@ fn main() {
         .add_systems(
             Update,
             (
-                handle_editor_buttons,
                 edit_from_viewport,
                 draw_joint_links,
                 drive_actuator_behaviors,
@@ -232,6 +238,7 @@ macro_rules! action_button {
                 },
                 BackgroundColor($color),
                 $action,
+                observe(handle_editor_button_activated),
             ))
             .with_children(|button| {
                 button.spawn((
@@ -249,7 +256,7 @@ macro_rules! action_button {
 fn setup_editor_panel(mut commands: Commands) {
     commands
         .spawn((
-            Button,
+            Hovered::default(),
             Node {
                 position_type: PositionType::Absolute,
                 top: Val::Px(16.0),
@@ -455,61 +462,55 @@ fn update_placement_settings_label(
     }
 }
 
-fn handle_editor_buttons(
-    interactions: Query<(&Interaction, &EditorButtonAction), (Changed<Interaction>, With<Button>)>,
+fn handle_editor_button_activated(
+    activate: On<Activate>,
+    actions: Query<&EditorButtonAction>,
     mut tool: ResMut<EditorTool>,
     mut placement: ResMut<PlacementSettings>,
     project: Res<DraftProject>,
 ) {
-    for (interaction, action) in &interactions {
-        if *interaction != Interaction::Pressed {
-            continue;
-        }
+    let Ok(action) = actions.get(activate.entity) else {
+        return;
+    };
 
-        match action {
-            EditorButtonAction::PlaceSphere => *tool = EditorTool::PlaceSphere,
-            EditorButtonAction::PlaceCuboid => *tool = EditorTool::PlaceCuboid,
-            EditorButtonAction::PlaceCapsule => *tool = EditorTool::PlaceCapsule,
-            EditorButtonAction::ConnectFixed => *tool = EditorTool::ConnectFixed,
-            EditorButtonAction::ConnectBall => *tool = EditorTool::ConnectBall,
-            EditorButtonAction::ConnectHinge => *tool = EditorTool::ConnectHinge,
-            EditorButtonAction::ConnectPoweredHinge => {
-                *tool = EditorTool::ConnectPoweredHinge
-            }
-            EditorButtonAction::ConnectSlider => *tool = EditorTool::ConnectSlider,
-            EditorButtonAction::ConnectPoweredSlider => {
-                *tool = EditorTool::ConnectPoweredSlider
-            }
-            EditorButtonAction::ConnectDistance => *tool = EditorTool::ConnectDistance,
-            EditorButtonAction::SetSizeSmall => placement.size_scale = 0.5,
-            EditorButtonAction::SetSizeStandard => placement.size_scale = 1.0,
-            EditorButtonAction::SetSizeLarge => placement.size_scale = 2.0,
-            EditorButtonAction::SetDensityLight => placement.density_kg_m3 = 300.0,
-            EditorButtonAction::SetDensityMedium => placement.density_kg_m3 = 1000.0,
-            EditorButtonAction::SetDensityDense => placement.density_kg_m3 = 1800.0,
-            EditorButtonAction::Save => {
-                match save_project(
-                    Path::new(EXPORT_DIRECTORY),
-                    &project.organism,
-                    &project.motion,
-                ) {
-                    Ok(paths) => info!(
-                        "Saved organism to {} and motion to {}",
-                        paths.organism.display(),
-                        paths.motion.display()
-                    ),
-                    Err(error) => error!("Could not save project: {error}"),
-                }
+    match *action {
+        EditorButtonAction::PlaceSphere => *tool = EditorTool::PlaceSphere,
+        EditorButtonAction::PlaceCuboid => *tool = EditorTool::PlaceCuboid,
+        EditorButtonAction::PlaceCapsule => *tool = EditorTool::PlaceCapsule,
+        EditorButtonAction::ConnectFixed => *tool = EditorTool::ConnectFixed,
+        EditorButtonAction::ConnectBall => *tool = EditorTool::ConnectBall,
+        EditorButtonAction::ConnectHinge => *tool = EditorTool::ConnectHinge,
+        EditorButtonAction::ConnectPoweredHinge => *tool = EditorTool::ConnectPoweredHinge,
+        EditorButtonAction::ConnectSlider => *tool = EditorTool::ConnectSlider,
+        EditorButtonAction::ConnectPoweredSlider => *tool = EditorTool::ConnectPoweredSlider,
+        EditorButtonAction::ConnectDistance => *tool = EditorTool::ConnectDistance,
+        EditorButtonAction::SetSizeSmall => placement.size_scale = 0.5,
+        EditorButtonAction::SetSizeStandard => placement.size_scale = 1.0,
+        EditorButtonAction::SetSizeLarge => placement.size_scale = 2.0,
+        EditorButtonAction::SetDensityLight => placement.density_kg_m3 = 300.0,
+        EditorButtonAction::SetDensityMedium => placement.density_kg_m3 = 1000.0,
+        EditorButtonAction::SetDensityDense => placement.density_kg_m3 = 1800.0,
+        EditorButtonAction::Save => {
+            match save_project(
+                Path::new(EXPORT_DIRECTORY),
+                &project.organism,
+                &project.motion,
+            ) {
+                Ok(paths) => info!(
+                    "Saved organism to {} and motion to {}",
+                    paths.organism.display(),
+                    paths.motion.display()
+                ),
+                Err(error) => error!("Could not save project: {error}"),
             }
         }
     }
 }
-
 fn edit_from_viewport(
     buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform)>,
-    ui_interactions: Query<&Interaction, With<Button>>,
+    hovered_panels: Query<&Hovered>,
     part_query: Query<(Entity, &GlobalTransform, &PartTag)>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -521,10 +522,7 @@ fn edit_from_viewport(
     if !buttons.just_pressed(MouseButton::Left) {
         return;
     }
-    if ui_interactions
-        .iter()
-        .any(|interaction| *interaction != Interaction::None)
-    {
+    if hovered_panels.iter().any(|hovered| hovered.get()) {
         return;
     }
 
