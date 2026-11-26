@@ -34,6 +34,7 @@ fn main() {
         .init_resource::<DraftProject>()
         .init_resource::<EditorTool>()
         .init_resource::<PlacementSettings>()
+        .init_resource::<PartSelection>()
         .add_systems(Startup, (setup_scene, setup_editor_panel))
         .add_systems(
             Update,
@@ -42,6 +43,8 @@ fn main() {
                 draw_joint_links,
                 drive_actuator_behaviors,
                 update_placement_settings_label,
+                update_part_inspector,
+                draw_selected_part_outline,
             ),
         )
         .run();
@@ -64,6 +67,15 @@ impl Default for PlacementSettings {
 
 #[derive(Component)]
 struct PlacementSettingsLabel;
+
+#[derive(Component)]
+struct PartInspectorLabel;
+
+/// Selection is stored by stable model ID rather than by a transient ECS entity.
+#[derive(Resource, Default)]
+struct PartSelection {
+    part_id: Option<String>,
+}
 
 #[derive(Resource)]
 struct DraftProject {
@@ -94,6 +106,7 @@ impl Default for DraftProject {
 enum EditorTool {
     #[default]
     PlaceSphere,
+    Select,
     PlaceCuboid,
     PlaceCapsule,
     ConnectFixed,
@@ -113,7 +126,7 @@ impl EditorTool {
             Self::ConnectHinge | Self::ConnectPoweredHinge => Some(JointKind::Hinge),
             Self::ConnectSlider | Self::ConnectPoweredSlider => Some(JointKind::Slider),
             Self::ConnectDistance => Some(JointKind::Distance),
-            Self::PlaceSphere | Self::PlaceCuboid | Self::PlaceCapsule => None,
+            Self::Select | Self::PlaceSphere | Self::PlaceCuboid | Self::PlaceCapsule => None,
         }
     }
 
@@ -147,7 +160,8 @@ impl EditorTool {
             | Self::ConnectPoweredHinge
             | Self::ConnectSlider
             | Self::ConnectPoweredSlider
-            | Self::ConnectDistance => None,
+            | Self::ConnectDistance
+            | Self::Select => None,
         }
     }
 }
@@ -166,6 +180,7 @@ struct PartTag {
 #[derive(Component, Clone, Copy)]
 enum EditorButtonAction {
     PlaceSphere,
+    SelectPart,
     PlaceCuboid,
     PlaceCapsule,
     ConnectFixed,
@@ -284,7 +299,7 @@ fn setup_editor_panel(mut commands: Commands) {
                 TextColor(Color::WHITE),
             ));
             panel.spawn((
-                Text::new("BODY CONSTRUCTION"),
+                Text::new("PART INSPECTOR"),
                 TextFont {
                     font_size: FontSize::Px(10.0),
                     ..default()
@@ -294,7 +309,22 @@ fn setup_editor_panel(mut commands: Commands) {
 
             action_button!(
                 panel,
-                "Add sphere",
+                "Select / inspect part",
+                EditorButtonAction::SelectPart,
+                Color::srgb(0.27, 0.22, 0.12)
+            );
+            panel.spawn((
+                Text::new("No part selected. Choose Select and click a body part."),
+                TextFont {
+                    font_size: FontSize::Px(11.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.88, 0.86, 0.72)),
+                PartInspectorLabel,
+            ));
+
+            panel.spawn((
+                Text::new("BODY CONSTRUCTION"),
                 EditorButtonAction::PlaceSphere,
                 Color::srgb(0.12, 0.2, 0.3)
             );
@@ -474,6 +504,7 @@ fn handle_editor_button_activated(
 
     match *action {
         EditorButtonAction::PlaceSphere => *tool = EditorTool::PlaceSphere,
+        EditorButtonAction::SelectPart => *tool = EditorTool::Select,
         EditorButtonAction::PlaceCuboid => *tool = EditorTool::PlaceCuboid,
         EditorButtonAction::PlaceCapsule => *tool = EditorTool::PlaceCapsule,
         EditorButtonAction::ConnectFixed => *tool = EditorTool::ConnectFixed,
@@ -517,6 +548,7 @@ fn edit_from_viewport(
     mut project: ResMut<DraftProject>,
     tool: Res<EditorTool>,
     placement: Res<PlacementSettings>,
+    mut selection: ResMut<PartSelection>,
 ) {
     if !buttons.just_pressed(MouseButton::Left) {
         return;
@@ -538,6 +570,20 @@ fn edit_from_viewport(
         return;
     };
     let ray_direction = ray.direction.as_vec3();
+
+    if *tool == EditorTool::Select {
+        let picked = pick_body_part(ray.origin, ray_direction, &part_query)
+            .map(|(_, _, part_id, _)| part_id);
+
+        if selection.part_id != picked {
+            match &picked {
+                Some(part_id) => info!("Selected {part_id}"),
+                None => info!("Selection cleared"),
+            }
+            selection.part_id = picked;
+        }
+        return;
+    }
 
     if let Some(geometry) = tool.geometry(placement.size_scale) {
         place_body_part(
@@ -667,6 +713,25 @@ fn place_body_part(
     info!("Added {part_id}");
 }
 
+fn pick_body_part(
+    ray_origin: Vec3,
+    ray_direction: Vec3,
+    part_query: &Query<(Entity, &GlobalTransform, &PartTag)>,
+) -> Option<(f32, Entity, String, GlobalTransform)> {
+    part_query
+        .iter()
+        .filter_map(|(entity, transform, tag)| {
+            ray_sphere_distance(
+                ray_origin,
+                ray_direction,
+                transform.translation(),
+                tag.pick_radius * 1.08,
+            )
+            .map(|distance| (distance, entity, tag.id.clone(), *transform))
+        })
+        .min_by(|left, right| left.0.total_cmp(&right.0))
+}
+
 fn connect_body_parts(
     kind: JointKind,
     powered_hinge: bool,
@@ -677,14 +742,7 @@ fn connect_body_parts(
     commands: &mut Commands,
     project: &mut DraftProject,
 ) {
-    let picked = part_query
-        .iter()
-        .filter_map(|(entity, transform, tag)| {
-            let position = transform.translation();
-            ray_sphere_distance(ray_origin, ray_direction, position, tag.pick_radius * 1.08)
-                .map(|distance| (distance, entity, tag.id.clone(), transform))
-        })
-        .min_by(|left, right| left.0.total_cmp(&right.0));
+    let picked = pick_body_part(ray_origin, ray_direction, part_query);
 
     let Some((_, child_entity, child_id, child_transform)) = picked else {
         project.pending_joint_part = None;
@@ -707,7 +765,7 @@ fn connect_body_parts(
     let Some((parent_entity, parent_transform)) = part_query
         .iter()
         .find(|(_, _, tag)| tag.id == parent_id)
-        .map(|(entity, transform, _)| (entity, transform))
+        .map(|(entity, transform, _)| (entity, *transform))
     else {
         warn!("Selected parent part {parent_id} no longer exists");
         return;
@@ -911,6 +969,98 @@ fn drive_actuator_behaviors(
                 ActuatorKind::MuscleTendon => {}
             }
         }
+    }
+}
+
+fn update_part_inspector(
+    selection: Res<PartSelection>,
+    project: Res<DraftProject>,
+    mut labels: Query<&mut Text, With<PartInspectorLabel>>,
+) {
+    if !selection.is_changed() && !project.is_changed() {
+        return;
+    }
+
+    let details = selection
+        .part_id
+        .as_ref()
+        .and_then(|part_id| {
+            project
+                .organism
+                .parts
+                .iter()
+                .find(|part| part.id == *part_id)
+        })
+        .map(describe_body_part)
+        .unwrap_or_else(|| {
+            "No part selected. Choose Select / inspect part, then click a body in the viewport."
+                .to_owned()
+        });
+
+    for mut label in &mut labels {
+        label.0.clone_from(&details);
+    }
+}
+
+fn describe_body_part(part: &BodyPart) -> String {
+    let geometry = match &part.geometry {
+        Geometry::Sphere { radius_m } => format!("Sphere · radius {radius_m:.3} m"),
+        Geometry::Cuboid { half_extents_m } => format!(
+            "Cuboid · half-extents ({:.3}, {:.3}, {:.3}) m",
+            half_extents_m.x, half_extents_m.y, half_extents_m.z
+        ),
+        Geometry::Capsule {
+            radius_m,
+            half_height_m,
+        } => format!("Capsule · radius {radius_m:.3} m · half-height {half_height_m:.3} m"),
+    };
+
+    let physics = match &part.physics {
+        BodyPhysics::Rigid(properties) => format!(
+            "Rigid body\nMass: {:.3} kg\nDensity: {:.1} kg/m³\nFriction: {:.2}\nRestitution: {:.2}\nLinear damping: {:.3}\nAngular damping: {:.3}",
+            properties.mass_kg,
+            properties.density_kg_m3,
+            properties.friction,
+            properties.restitution,
+            properties.linear_damping,
+            properties.angular_damping
+        ),
+        BodyPhysics::Soft(properties) => format!(
+            "Soft body\nDensity: {:.1} kg/m³\nElastic modulus: {:.1} Pa\nDamping ratio: {:.3}\nResolution: {}",
+            properties.density_kg_m3,
+            properties.elastic_modulus_pa,
+            properties.damping_ratio,
+            properties.resolution
+        ),
+    };
+
+    format!(
+        "{} ({})\nGeometry: {}\nRest position: ({:.3}, {:.3}, {:.3}) m\n{}",
+        part.name,
+        part.id,
+        geometry,
+        part.transform.translation_m.x,
+        part.transform.translation_m.y,
+        part.transform.translation_m.z,
+        physics
+    )
+}
+
+fn draw_selected_part_outline(
+    mut gizmos: Gizmos,
+    selection: Res<PartSelection>,
+    parts: Query<(&GlobalTransform, &PartTag)>,
+) {
+    let Some(selected_id) = selection.part_id.as_deref() else {
+        return;
+    };
+
+    if let Some((transform, tag)) = parts.iter().find(|(_, tag)| tag.id == selected_id) {
+        gizmos.sphere(
+            transform.translation(),
+            tag.pick_radius * 1.16,
+            Color::srgb(1.0, 0.82, 0.28),
+        );
     }
 }
 
