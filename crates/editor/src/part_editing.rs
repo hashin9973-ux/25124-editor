@@ -1,5 +1,3 @@
-[Reading 289 lines from start (total: 289 lines, 0 remaining)]
-
 //! Validated, engine-independent body-part editing operations.
 
 use organism_core::{BodyPart, BodyPhysics, Geometry};
