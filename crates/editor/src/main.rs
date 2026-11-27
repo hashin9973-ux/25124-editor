@@ -407,6 +407,35 @@ macro_rules! joint_inspector_field {
         ));
     };
 }
+ 
+macro_rules! joint_action_button {
+    ($panel:expr, $label:expr, $action:expr, $color:expr) => {
+        $panel
+            .spawn((
+                Button,
+                Node {
+                    width: Val::Px(236.0),
+                    height: Val::Px(34.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor($color),
+                $action,
+                observe(handle_joint_properties_activated),
+            ))
+            .with_children(|button| {
+                button.spawn((
+                    Text::new($label),
+                    TextFont {
+                        font_size: FontSize::Px(12.0),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            });
+    };
+}
 
 fn setup_editor_panel(mut commands: Commands) {
     commands
@@ -513,7 +542,7 @@ fn setup_editor_panel(mut commands: Commands) {
             joint_inspector_field!(panel, "Child local anchor Y (m)", ChildAnchorY);
             joint_inspector_field!(panel, "Child local anchor Z (m)", ChildAnchorZ);
             joint_inspector_field!(panel, "Distance rest length (m)", RestLength);
-            action_button!(
+            joint_action_button!(
                 panel,
                 "Apply joint properties",
                 EditorButtonAction::ApplyJointProperties,
@@ -713,20 +742,11 @@ fn handle_editor_button_activated(
     mut placement: ResMut<PlacementSettings>,
     mut project: ResMut<DraftProject>,
     selection: Res<PartSelection>,
-    joint_selection: Res<JointSelection>,
     inspector_inputs: Query<(&EditableText, &InspectorFieldInput)>,
-    joint_inspector_inputs: Query<(&EditableText, &JointInspectorFieldInput)>,
     part_entities: Query<(Entity, &PartTag)>,
-    runtime_joint_entities: Query<(Entity, &RuntimeJointTag)>,
-    fixed_joints: Query<&FixedJoint>,
-    spherical_joints: Query<&SphericalJoint>,
-    revolute_joints: Query<&RevoluteJoint>,
-    prismatic_joints: Query<&PrismaticJoint>,
-    distance_joints: Query<&DistanceJoint>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut inspector_status: Query<&mut Text, With<InspectorStatusLabel>>,
-    mut joint_inspector_status: Query<&mut Text, With<JointInspectorStatusLabel>>,
 ) {
     let Ok(action) = actions.get(activate.entity) else {
         return;
@@ -761,21 +781,6 @@ fn handle_editor_button_activated(
                 &mut inspector_status,
             );
         }
-        EditorButtonAction::ApplyJointProperties => {
-            apply_selected_joint_edit(
-                joint_selection.joint_id.as_deref(),
-                &mut project,
-                &joint_inspector_inputs,
-                &runtime_joint_entities,
-                &fixed_joints,
-                &spherical_joints,
-                &revolute_joints,
-                &prismatic_joints,
-                &distance_joints,
-                &mut commands,
-                &mut joint_inspector_status,
-            );
-        }
         EditorButtonAction::Save => {
             match save_project(
                 Path::new(EXPORT_DIRECTORY),
@@ -790,7 +795,45 @@ fn handle_editor_button_activated(
                 Err(error) => error!("Could not save project: {error}"),
             }
         }
+        EditorButtonAction::ApplyJointProperties => {}
     }
+}
+
+fn handle_joint_properties_activated(
+    activate: On<Activate>,
+    actions: Query<&EditorButtonAction>,
+    joint_selection: Res<JointSelection>,
+    mut project: ResMut<DraftProject>,
+    joint_inspector_inputs: Query<(&EditableText, &JointInspectorFieldInput)>,
+    runtime_joint_entities: Query<(Entity, &RuntimeJointTag)>,
+    fixed_joints: Query<&FixedJoint>,
+    spherical_joints: Query<&SphericalJoint>,
+    revolute_joints: Query<&RevoluteJoint>,
+    prismatic_joints: Query<&PrismaticJoint>,
+    distance_joints: Query<&DistanceJoint>,
+    mut commands: Commands,
+    mut status: Query<&mut Text, With<JointInspectorStatusLabel>>,
+) {
+    let Ok(action) = actions.get(activate.entity) else {
+        return;
+    };
+    if !matches!(*action, EditorButtonAction::ApplyJointProperties) {
+        return;
+    }
+
+    apply_selected_joint_edit(
+        joint_selection.joint_id.as_deref(),
+        &mut project,
+        &joint_inspector_inputs,
+        &runtime_joint_entities,
+        &fixed_joints,
+        &spherical_joints,
+        &revolute_joints,
+        &prismatic_joints,
+        &distance_joints,
+        &mut commands,
+        &mut status,
+    );
 }
 fn edit_from_viewport(
     buttons: Res<ButtonInput<MouseButton>>,
