@@ -16,7 +16,7 @@ use organism_core::{
     Vec3 as DataVec3,
 };
 use organism_serialization::save_project;
-use part_editing::set_sphere_radius;
+use part_editing::{PartEdit, apply_part_edit};
 use runtime_geometry::build_runtime_geometry;
 use std::path::Path;
 
@@ -40,6 +40,7 @@ fn main() {
         .init_resource::<EditorTool>()
         .init_resource::<PlacementSettings>()
         .init_resource::<PartSelection>()
+        .init_resource::<PartInspectorState>()
         .add_systems(Startup, (setup_scene, setup_editor_panel))
         .add_systems(
             Update,
@@ -77,10 +78,25 @@ struct PlacementSettingsLabel;
 struct PartInspectorLabel;
 
 #[derive(Component)]
-struct SphereRadiusInput;
-
-#[derive(Component)]
 struct InspectorStatusLabel;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InspectorField {
+    Name, DimensionA, DimensionB, DimensionC,
+    Density, Friction, Restitution, LinearDamping, AngularDamping,
+}
+
+#[derive(Component, Clone, Copy)]
+struct InspectorFieldInput(InspectorField);
+
+#[derive(Component, Clone, Copy)]
+struct InspectorFieldLabel(InspectorField);
+
+#[derive(Resource, Default)]
+struct PartInspectorState {
+    selected_part_id: Option<String>,
+    selected_part: Option<BodyPart>,
+}
 
 /// Selection is stored by stable model ID rather than by a transient ECS entity.
 #[derive(Resource, Default)]
@@ -208,7 +224,7 @@ enum EditorButtonAction {
     SetDensityMedium,
     SetDensityDense,
     Save,
-    ApplySphereRadius,
+    ApplyPartProperties,
 }
 
 fn setup_scene(
@@ -253,30 +269,52 @@ fn setup_scene(
 
 macro_rules! action_button {
     ($panel:expr, $label:expr, $action:expr, $color:expr) => {
-        $panel
-            .spawn((
-                Button,
-                Node {
-                    width: Val::Px(236.0),
-                    height: Val::Px(34.0),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    ..default()
-                },
-                BackgroundColor($color),
-                $action,
-                observe(handle_editor_button_activated),
-            ))
-            .with_children(|button| {
-                button.spawn((
-                    Text::new($label),
-                    TextFont {
-                        font_size: FontSize::Px(12.0),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                ));
-            });
+        $panel.spawn((
+            Button,
+            Node {
+                width: Val::Px(236.0),
+                height: Val::Px(34.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor($color),
+            $action,
+            observe(handle_editor_button_activated),
+        ))
+        .with_children(|button| {
+            button.spawn((
+                Text::new($label),
+                TextFont { font_size: FontSize::Px(12.0), ..default() },
+                TextColor(Color::WHITE),
+            ));
+        });
+    };
+}
+
+macro_rules! inspector_field {
+    ($panel:expr, $label:expr, $field:ident) => {
+        $panel.spawn((
+            Text::new($label),
+            TextFont { font_size: FontSize::Px(10.0), ..default() },
+            TextColor(Color::srgb(0.72, 0.76, 0.82)),
+            InspectorFieldLabel(InspectorField::$field),
+        ));
+        $panel.spawn((
+            TextInput,
+            EditableText::new(""),
+            Node {
+                width: Val::Px(236.0),
+                height: Val::Px(32.0),
+                padding: UiRect::axes(Val::Px(9.0), Val::Px(5.0)),
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.1, 0.12, 0.16)),
+            TextFont { font_size: FontSize::Px(13.0), ..default() },
+            TextColor(Color::WHITE),
+            InspectorFieldInput(InspectorField::$field),
+        ));
     };
 }
 
@@ -334,36 +372,19 @@ fn setup_editor_panel(mut commands: Commands) {
                 TextColor(Color::srgb(0.88, 0.86, 0.72)),
                 PartInspectorLabel,
             ));
-            panel.spawn((
-                Text::new("SPHERE RADIUS · METERS"),
-                TextFont {
-                    font_size: FontSize::Px(10.0),
-                    ..default()
-                },
-                TextColor(Color::srgb(0.72, 0.76, 0.82)),
-            ));
-            panel.spawn((
-                TextInput,
-                EditableText::new(""),
-                Node {
-                    width: Val::Px(236.0),
-                    height: Val::Px(34.0),
-                    padding: UiRect::axes(Val::Px(9.0), Val::Px(5.0)),
-                    align_items: AlignItems::Center,
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.1, 0.12, 0.16)),
-                TextFont {
-                    font_size: FontSize::Px(13.0),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                SphereRadiusInput,
-            ));
+            inspector_field!(panel, "Part name", Name);
+            inspector_field!(panel, "Dimension A", DimensionA);
+            inspector_field!(panel, "Dimension B", DimensionB);
+            inspector_field!(panel, "Dimension C", DimensionC);
+            inspector_field!(panel, "Density · kg/m³", Density);
+            inspector_field!(panel, "Friction coefficient", Friction);
+            inspector_field!(panel, "Restitution · 0–1", Restitution);
+            inspector_field!(panel, "Linear damping", LinearDamping);
+            inspector_field!(panel, "Angular damping", AngularDamping);
             action_button!(
                 panel,
-                "Apply sphere radius",
-                EditorButtonAction::ApplySphereRadius,
+                "Apply part properties",
+                EditorButtonAction::ApplyPartProperties,
                 Color::srgb(0.23, 0.3, 0.42)
             );
             panel.spawn((
@@ -560,7 +581,7 @@ fn handle_editor_button_activated(
     mut placement: ResMut<PlacementSettings>,
     mut project: ResMut<DraftProject>,
     selection: Res<PartSelection>,
-    radius_inputs: Query<&EditableText, With<SphereRadiusInput>>,
+    inspector_inputs: Query<(&EditableText, &InspectorFieldInput)>,
     part_entities: Query<(Entity, &PartTag)>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -588,11 +609,11 @@ fn handle_editor_button_activated(
         EditorButtonAction::SetDensityLight => placement.density_kg_m3 = 300.0,
         EditorButtonAction::SetDensityMedium => placement.density_kg_m3 = 1000.0,
         EditorButtonAction::SetDensityDense => placement.density_kg_m3 = 1800.0,
-        EditorButtonAction::ApplySphereRadius => {
-            apply_selected_sphere_radius(
+        EditorButtonAction::ApplyPartProperties => {
+            apply_selected_part_edit(
                 selection.part_id.as_deref(),
                 &mut project,
-                &radius_inputs,
+                &inspector_inputs,
                 &part_entities,
                 &mut commands,
                 &mut meshes,
@@ -1023,102 +1044,221 @@ fn drive_actuator_behaviors(
     }
 }
 
-fn apply_selected_sphere_radius(
+
+fn apply_selected_part_edit(
     selected_part_id: Option<&str>,
     project: &mut DraftProject,
-    radius_inputs: &Query<&EditableText, With<SphereRadiusInput>>,
+    inputs: &Query<(&EditableText, &InspectorFieldInput)>,
     part_entities: &Query<(Entity, &PartTag)>,
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
-    inspector_status: &mut Query<&mut Text, With<InspectorStatusLabel>>,
+    status: &mut Query<&mut Text, With<InspectorStatusLabel>>,
 ) {
     let Some(part_id) = selected_part_id else {
-        set_inspector_status(
-            inspector_status,
-            "Select a sphere before applying a radius.",
-        );
+        set_inspector_status(status, "Select a body part before applying changes.");
+        return;
+    };
+    let Some(part_index) = project.organism.parts.iter().position(|part| part.id == part_id) else {
+        set_inspector_status(status, "The selected part is no longer in the organism.");
+        return;
+    };
+    let Some((entity, _)) = part_entities.iter().find(|(_, tag)| tag.id == part_id) else {
+        set_inspector_status(status, "The selected part has no live physics entity.");
         return;
     };
 
-    let Some(input) = radius_inputs.iter().next() else {
-        set_inspector_status(inspector_status, "The radius input is unavailable.");
+    let mut updated = project.organism.parts[part_index].clone();
+    if matches!(&updated.physics, BodyPhysics::Soft(_)) {
+        set_inspector_status(status, "Soft-body editing is unavailable until a deformable runtime solver exists.");
+        return;
+    }
+    let Some(name) = inspector_field_text(inputs, InspectorField::Name) else {
+        set_inspector_status(status, "Enter a non-empty part name.");
         return;
     };
 
-    let radius_m = match input.value().to_string().trim().parse::<f32>() {
-        Ok(radius) => radius,
-        Err(_) => {
-            set_inspector_status(inspector_status, "Enter a valid radius in meters.");
-            return;
+    let geometry = match &updated.geometry {
+        Geometry::Sphere { .. } => {
+            let Some(radius_m) = inspector_field_number(inputs, InspectorField::DimensionA) else {
+                set_inspector_status(status, "Enter a valid sphere radius in meters.");
+                return;
+            };
+            Geometry::Sphere { radius_m }
+        }
+        Geometry::Cuboid { .. } => {
+            let Some(x) = inspector_field_number(inputs, InspectorField::DimensionA) else {
+                set_inspector_status(status, "Enter a valid X half-extent in meters.");
+                return;
+            };
+            let Some(y) = inspector_field_number(inputs, InspectorField::DimensionB) else {
+                set_inspector_status(status, "Enter a valid Y half-extent in meters.");
+                return;
+            };
+            let Some(z) = inspector_field_number(inputs, InspectorField::DimensionC) else {
+                set_inspector_status(status, "Enter a valid Z half-extent in meters.");
+                return;
+            };
+            Geometry::Cuboid { half_extents_m: DataVec3::new(x, y, z) }
+        }
+        Geometry::Capsule { .. } => {
+            let Some(radius_m) = inspector_field_number(inputs, InspectorField::DimensionA) else {
+                set_inspector_status(status, "Enter a valid capsule radius in meters.");
+                return;
+            };
+            let Some(half_height_m) = inspector_field_number(inputs, InspectorField::DimensionB) else {
+                set_inspector_status(status, "Enter a valid capsule half-height in meters.");
+                return;
+            };
+            Geometry::Capsule { radius_m, half_height_m }
         }
     };
 
-    let Some(part_index) = project
-        .organism
-        .parts
-        .iter()
-        .position(|part| part.id == part_id)
-    else {
-        set_inspector_status(
-            inspector_status,
-            "The selected part is no longer in the organism.",
-        );
+    let Some(density_kg_m3) = inspector_field_number(inputs, InspectorField::Density) else {
+        set_inspector_status(status, "Enter a valid material density in kg/m³.");
+        return;
+    };
+    let Some(friction) = inspector_field_number(inputs, InspectorField::Friction) else {
+        set_inspector_status(status, "Enter a valid friction coefficient.");
+        return;
+    };
+    let Some(restitution) = inspector_field_number(inputs, InspectorField::Restitution) else {
+        set_inspector_status(status, "Enter restitution between zero and one.");
+        return;
+    };
+    let Some(linear_damping) = inspector_field_number(inputs, InspectorField::LinearDamping) else {
+        set_inspector_status(status, "Enter valid linear damping.");
+        return;
+    };
+    let Some(angular_damping) = inspector_field_number(inputs, InspectorField::AngularDamping) else {
+        set_inspector_status(status, "Enter valid angular damping.");
         return;
     };
 
-    let Some((entity, _)) = part_entities.iter().find(|(_, tag)| tag.id == part_id) else {
-        set_inspector_status(
-            inspector_status,
-            "The selected part has no live physics entity.",
-        );
-        return;
-    };
-
-    let mut updated_part = project.organism.parts[part_index].clone();
-    if let Err(error) = set_sphere_radius(&mut updated_part, radius_m) {
-        set_inspector_status(inspector_status, &error.to_string());
+    if let Err(error) = apply_part_edit(&mut updated, PartEdit {
+        name, geometry, density_kg_m3, friction, restitution, linear_damping, angular_damping,
+    }) {
+        set_inspector_status(status, &error.to_string());
         return;
     }
 
-    let Some(runtime_geometry) = build_runtime_geometry(&updated_part.geometry) else {
-        set_inspector_status(
-            inspector_status,
-            "The edited geometry cannot be represented at runtime.",
-        );
+    let Some(runtime) = build_runtime_geometry(&updated.geometry) else {
+        set_inspector_status(status, "The edited geometry cannot be represented at runtime.");
         return;
     };
-
-    let BodyPhysics::Rigid(properties) = &updated_part.physics else {
-        set_inspector_status(
-            inspector_status,
-            "Only rigid body parts can be edited with this control.",
-        );
-        return;
+    let BodyPhysics::Rigid(properties) = &updated.physics else {
+        unreachable!("the validated edit operation only supports rigid bodies");
     };
+    let mass_kg = properties.mass_kg;
     let mass_properties =
-        MassPropertiesBundle::from_shape(&runtime_geometry.collider, properties.density_kg_m3);
+        MassPropertiesBundle::from_shape(&runtime.collider, properties.density_kg_m3);
 
     commands.entity(entity).insert((
-        Mesh3d(meshes.add(runtime_geometry.mesh)),
-        runtime_geometry.collider,
+        Mesh3d(meshes.add(runtime.mesh)),
+        runtime.collider,
         mass_properties,
         Friction::new(properties.friction),
         Restitution::new(properties.restitution),
         LinearDamping(properties.linear_damping),
         AngularDamping(properties.angular_damping),
-        PartTag {
-            id: part_id.to_owned(),
-            pick_radius: runtime_geometry.pick_radius,
-        },
+        PartTag { id: part_id.to_owned(), pick_radius: runtime.pick_radius },
     ));
+    project.organism.parts[part_index] = updated;
+    set_inspector_status(status, &format!("Applied part properties · mass {mass_kg:.4} kg."));
+    info!("Updated {part_id}: mass {mass_kg:.4} kg");
+}
 
-    let mass_kg = properties.mass_kg;
-    project.organism.parts[part_index] = updated_part;
-    set_inspector_status(
-        inspector_status,
-        &format!("Applied radius {radius_m:.4} m · mass {mass_kg:.4} kg."),
-    );
-    info!("Updated {part_id}: sphere radius {radius_m:.4} m, mass {mass_kg:.4} kg");
+fn inspector_field_text(
+    inputs: &Query<(&EditableText, &InspectorFieldInput)>,
+    field: InspectorField,
+) -> Option<String> {
+    inputs.iter().find(|(_, marker)| marker.0 == field)
+        .map(|(input, _)| input.value().to_string())
+}
+
+fn inspector_field_number(
+    inputs: &Query<(&EditableText, &InspectorFieldInput)>,
+    field: InspectorField,
+) -> Option<f32> {
+    inspector_field_text(inputs, field)?.trim().parse::<f32>().ok()
+}
+
+fn inspector_field_value(part: &BodyPart, field: InspectorField) -> String {
+    match field {
+        InspectorField::Name => part.name.clone(),
+        InspectorField::DimensionA => match &part.geometry {
+            Geometry::Sphere { radius_m } => format!("{radius_m:.4}"),
+            Geometry::Cuboid { half_extents_m } => format!("{:.4}", half_extents_m.x),
+            Geometry::Capsule { radius_m, .. } => format!("{radius_m:.4}"),
+        },
+        InspectorField::DimensionB => match &part.geometry {
+            Geometry::Cuboid { half_extents_m } => format!("{:.4}", half_extents_m.y),
+            Geometry::Capsule { half_height_m, .. } => format!("{half_height_m:.4}"),
+            Geometry::Sphere { .. } => String::new(),
+        },
+        InspectorField::DimensionC => match &part.geometry {
+            Geometry::Cuboid { half_extents_m } => format!("{:.4}", half_extents_m.z),
+            Geometry::Sphere { .. } | Geometry::Capsule { .. } => String::new(),
+        },
+        InspectorField::Density => match &part.physics {
+            BodyPhysics::Rigid(p) => format!("{:.2}", p.density_kg_m3),
+            BodyPhysics::Soft(p) => format!("{:.2}", p.density_kg_m3),
+        },
+        InspectorField::Friction => match &part.physics {
+            BodyPhysics::Rigid(p) => format!("{:.3}", p.friction),
+            BodyPhysics::Soft(_) => String::new(),
+        },
+        InspectorField::Restitution => match &part.physics {
+            BodyPhysics::Rigid(p) => format!("{:.3}", p.restitution),
+            BodyPhysics::Soft(_) => String::new(),
+        },
+        InspectorField::LinearDamping => match &part.physics {
+            BodyPhysics::Rigid(p) => format!("{:.3}", p.linear_damping),
+            BodyPhysics::Soft(_) => String::new(),
+        },
+        InspectorField::AngularDamping => match &part.physics {
+            BodyPhysics::Rigid(p) => format!("{:.3}", p.angular_damping),
+            BodyPhysics::Soft(_) => String::new(),
+        },
+    }
+}
+
+fn inspector_field_label(part: &BodyPart, field: InspectorField) -> String {
+    match field {
+        InspectorField::Name => "Part name".into(),
+        InspectorField::DimensionA => match &part.geometry {
+            Geometry::Sphere { .. } => "Sphere radius · meters".into(),
+            Geometry::Cuboid { .. } => "Cuboid half-extent X · meters".into(),
+            Geometry::Capsule { .. } => "Capsule radius · meters".into(),
+        },
+        InspectorField::DimensionB => match &part.geometry {
+            Geometry::Cuboid { .. } => "Cuboid half-extent Y · meters".into(),
+            Geometry::Capsule { .. } => "Capsule cylindrical half-height · meters".into(),
+            Geometry::Sphere { .. } => "Not used by spheres".into(),
+        },
+        InspectorField::DimensionC => match &part.geometry {
+            Geometry::Cuboid { .. } => "Cuboid half-extent Z · meters".into(),
+            Geometry::Sphere { .. } | Geometry::Capsule { .. } => "Not used by this primitive".into(),
+        },
+        InspectorField::Density => "Density · kg/m³".into(),
+        InspectorField::Friction => "Friction coefficient".into(),
+        InspectorField::Restitution => "Restitution · 0–1".into(),
+        InspectorField::LinearDamping => "Linear damping".into(),
+        InspectorField::AngularDamping => "Angular damping".into(),
+    }
+}
+
+fn inspector_field_label_for_empty_selection(field: InspectorField) -> &'static str {
+    match field {
+        InspectorField::Name => "Part name",
+        InspectorField::DimensionA => "Dimension A · meters",
+        InspectorField::DimensionB => "Dimension B · meters",
+        InspectorField::DimensionC => "Dimension C · meters",
+        InspectorField::Density => "Density · kg/m³",
+        InspectorField::Friction => "Friction coefficient",
+        InspectorField::Restitution => "Restitution · 0–1",
+        InspectorField::LinearDamping => "Linear damping",
+        InspectorField::AngularDamping => "Angular damping",
+    }
 }
 
 fn set_inspector_status(labels: &mut Query<&mut Text, With<InspectorStatusLabel>>, message: &str) {
@@ -1130,43 +1270,37 @@ fn set_inspector_status(labels: &mut Query<&mut Text, With<InspectorStatusLabel>
 fn update_part_inspector(
     selection: Res<PartSelection>,
     project: Res<DraftProject>,
+    mut state: ResMut<PartInspectorState>,
     mut labels: Query<&mut Text, With<PartInspectorLabel>>,
-    mut radius_inputs: Query<&mut EditableText, With<SphereRadiusInput>>,
+    mut inputs: Query<(&mut EditableText, &InspectorFieldInput)>,
+    mut field_labels: Query<(&InspectorFieldLabel, &mut Text)>,
 ) {
-    let selection_changed = selection.is_changed();
-    let project_changed = project.is_changed();
-    if !selection_changed && !project_changed {
+    let selected_part = selection.part_id.as_ref().and_then(|id| {
+        project.organism.parts.iter().find(|part| part.id == *id)
+    });
+    let selected_id = selection.part_id.clone();
+    if state.selected_part_id == selected_id && state.selected_part.as_ref() == selected_part {
         return;
     }
 
-    let selected_part = selection.part_id.as_ref().and_then(|part_id| {
-        project
-            .organism
-            .parts
-            .iter()
-            .find(|part| part.id == *part_id)
-    });
-
-    if selection_changed {
-        let radius_text = selected_part
-            .and_then(|part| match &part.geometry {
-                Geometry::Sphere { radius_m } => Some(format!("{radius_m:.4}")),
-                _ => None,
-            })
-            .unwrap_or_default();
-
-        for mut input in &mut radius_inputs {
-            *input = EditableText::new(&radius_text);
-        }
-    }
+    state.selected_part_id = selected_id;
+    state.selected_part = selected_part.cloned();
 
     let details = selected_part.map(describe_body_part).unwrap_or_else(|| {
-        "No part selected. Choose Select / inspect part, then click a body in the viewport."
-            .to_owned()
+        "No part selected. Choose Select / inspect part, then click a body in the viewport.".to_owned()
     });
-
     for mut label in &mut labels {
         label.0.clone_from(&details);
+    }
+    for (mut input, marker) in &mut inputs {
+        *input = EditableText::new(
+            selected_part.map(|part| inspector_field_value(part, marker.0)).unwrap_or_default()
+        );
+    }
+    for (marker, mut label) in &mut field_labels {
+        label.0 = selected_part
+            .map(|part| inspector_field_label(part, marker.0))
+            .unwrap_or_else(|| inspector_field_label_for_empty_selection(marker.0).to_owned());
     }
 }
 
