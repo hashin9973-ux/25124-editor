@@ -2006,6 +2006,369 @@ fn update_part_inspector(
     }
 }
 
+
+fn selected_actuator_controller<'a>(
+    joint_id: Option<&str>,
+    project: &'a DraftProject,
+) -> Result<(&'a Actuator, &'a Behavior), &'static str> {
+    let Some(joint_id) = joint_id else {
+        return Err("Select a powered joint link to inspect its actuator and controller.");
+    };
+    if !project.organism.joints.iter().any(|joint| joint.id == joint_id) {
+        return Err("The selected joint is no longer in the organism.");
+    }
+
+    let mut actuators = project
+        .organism
+        .actuators
+        .iter()
+        .filter(|actuator| actuator.joint_id == joint_id);
+    let Some(actuator) = actuators.next() else {
+        return Err("This joint has no actuator. Use a powered hinge or powered slider.");
+    };
+    if actuators.next().is_some() {
+        return Err("This joint has multiple actuators; actuator selection is not yet available.");
+    }
+    if actuator.kind == ActuatorKind::MuscleTendon {
+        return Err("Muscle-tendon runtime actuation is not implemented yet.");
+    }
+
+    let mut behaviors = project.motion.behaviors.iter().filter(|behavior| {
+        behavior.controller == ControllerKind::Oscillator
+            && behavior.goals.iter().any(|goal| {
+                matches!(
+                    goal,
+                    MotionGoal::OscillateActuator { actuator_id, .. }
+                        if actuator_id == &actuator.id
+                )
+            })
+    });
+    let Some(behavior) = behaviors.next() else {
+        return Err("No supported oscillator behavior is linked to this actuator.");
+    };
+    if behaviors.next().is_some() {
+        return Err("Multiple oscillator behaviors target this actuator; resolve duplicate controllers first.");
+    }
+    let matching_goal_count = behavior
+        .goals
+        .iter()
+        .filter(|goal| {
+            matches!(
+                goal,
+                MotionGoal::OscillateActuator { actuator_id, .. }
+                    if actuator_id == &actuator.id
+            )
+        })
+        .count();
+    if matching_goal_count != 1 {
+        return Err("The selected behavior contains duplicate goals for this actuator.");
+    }
+
+    Ok((actuator, behavior))
+}
+
+fn update_actuator_inspector(
+    selection: Res<JointSelection>,
+    project: Res<DraftProject>,
+    mut state: ResMut<ActuatorInspectorState>,
+    mut descriptions: Query<&mut Text, With<ActuatorInspectorLabel>>,
+    mut inputs: Query<(&mut EditableText, &ActuatorInspectorFieldInput)>,
+    mut field_labels: Query<(&ActuatorInspectorFieldLabel, &mut Text)>,
+) {
+    let resolved = selected_actuator_controller(selection.joint_id.as_deref(), &project);
+    let (selected_actuator, selected_behavior, availability_message) = match resolved {
+        Ok((actuator, behavior)) => (Some(actuator.clone()), Some(behavior.clone()), String::new()),
+        Err(message) => (None, None, message.to_owned()),
+    };
+    let selected_joint_id = selection.joint_id.clone();
+    if state.selected_joint_id == selected_joint_id
+        && state.selected_actuator == selected_actuator
+        && state.selected_behavior == selected_behavior
+        && state.availability_message == availability_message
+    {
+        return;
+    }
+
+    state.selected_joint_id = selected_joint_id;
+    state.selected_actuator = selected_actuator;
+    state.selected_behavior = selected_behavior;
+    state.availability_message = availability_message;
+
+    let description = match (&state.selected_actuator, &state.selected_behavior) {
+        (Some(actuator), Some(behavior)) => describe_actuator_controller(actuator, behavior),
+        _ => state.availability_message.clone(),
+    };
+    for mut label in &mut descriptions {
+        label.0.clone_from(&description);
+    }
+    for (mut input, marker) in &mut inputs {
+        *input = EditableText::new(
+            match (&state.selected_actuator, &state.selected_behavior) {
+                (Some(actuator), Some(behavior)) => {
+                    actuator_inspector_field_value(actuator, behavior, marker.0)
+                }
+                _ => String::new(),
+            },
+        );
+    }
+    for (marker, mut label) in &mut field_labels {
+        label.0 = match (&state.selected_actuator, &state.selected_behavior) {
+            (Some(actuator), Some(_behavior)) => {
+                actuator_inspector_field_label(actuator, marker.0)
+            }
+            _ => actuator_inspector_field_label_for_empty_selection(marker.0).to_owned(),
+        };
+    }
+}
+
+fn actuator_inspector_field_value(
+    actuator: &Actuator,
+    behavior: &Behavior,
+    field: ActuatorInspectorField,
+) -> String {
+    match field {
+        ActuatorInspectorField::ActuatorName => actuator.name.clone(),
+        ActuatorInspectorField::MaxForce => actuator
+            .max_force_n
+            .map(|value| format!("{value:.3}"))
+            .unwrap_or_default(),
+        ActuatorInspectorField::MaxTorque => actuator
+            .max_torque_nm
+            .map(|value| format!("{value:.3}"))
+            .unwrap_or_default(),
+        ActuatorInspectorField::BehaviorName => behavior.name.clone(),
+        ActuatorInspectorField::Frequency => oscillator_goal_values(behavior, &actuator.id)
+            .map(|(frequency, _)| format!("{frequency:.3}"))
+            .unwrap_or_default(),
+        ActuatorInspectorField::Amplitude => oscillator_goal_values(behavior, &actuator.id)
+            .map(|(_, amplitude)| format!("{amplitude:.3}"))
+            .unwrap_or_default(),
+    }
+}
+
+fn actuator_inspector_field_label(
+    actuator: &Actuator,
+    field: ActuatorInspectorField,
+) -> String {
+    match field {
+        ActuatorInspectorField::ActuatorName => "Actuator name".into(),
+        ActuatorInspectorField::MaxForce if actuator.kind == ActuatorKind::LinearMotor => {
+            "Maximum force (N)".into()
+        }
+        ActuatorInspectorField::MaxForce => "Not used by angular motors".into(),
+        ActuatorInspectorField::MaxTorque if actuator.kind == ActuatorKind::AngularMotor => {
+            "Maximum torque (N m)".into()
+        }
+        ActuatorInspectorField::MaxTorque => "Not used by linear motors".into(),
+        ActuatorInspectorField::BehaviorName => "Controller behavior name".into(),
+        ActuatorInspectorField::Frequency => "Oscillation frequency (Hz)".into(),
+        ActuatorInspectorField::Amplitude if actuator.kind == ActuatorKind::AngularMotor => {
+            "Oscillation amplitude (rad)".into()
+        }
+        ActuatorInspectorField::Amplitude => "Oscillation amplitude (m)".into(),
+    }
+}
+
+fn actuator_inspector_field_label_for_empty_selection(
+    field: ActuatorInspectorField,
+) -> &'static str {
+    match field {
+        ActuatorInspectorField::ActuatorName => "Actuator name",
+        ActuatorInspectorField::MaxForce => "Maximum force (N)",
+        ActuatorInspectorField::MaxTorque => "Maximum torque (N m)",
+        ActuatorInspectorField::BehaviorName => "Controller behavior name",
+        ActuatorInspectorField::Frequency => "Oscillation frequency (Hz)",
+        ActuatorInspectorField::Amplitude => "Oscillation amplitude",
+    }
+}
+
+fn oscillator_goal_values(behavior: &Behavior, actuator_id: &str) -> Option<(f32, f32)> {
+    behavior.goals.iter().find_map(|goal| match goal {
+        MotionGoal::OscillateActuator {
+            actuator_id: goal_actuator_id,
+            frequency_hz,
+            amplitude,
+        } if goal_actuator_id == actuator_id => Some((*frequency_hz, *amplitude)),
+        _ => None,
+    })
+}
+
+fn describe_actuator_controller(actuator: &Actuator, behavior: &Behavior) -> String {
+    let (frequency_hz, amplitude) =
+        oscillator_goal_values(behavior, &actuator.id).unwrap_or_default();
+    let limit = match actuator.kind {
+        ActuatorKind::AngularMotor => format!(
+            "Maximum torque: {:.3} N m",
+            actuator.max_torque_nm.unwrap_or_default()
+        ),
+        ActuatorKind::LinearMotor => {
+            format!("Maximum force: {:.3} N", actuator.max_force_n.unwrap_or_default())
+        }
+        ActuatorKind::MuscleTendon => "Muscle-tendon runtime unavailable".into(),
+    };
+    let amplitude_unit = match actuator.kind {
+        ActuatorKind::AngularMotor => "rad",
+        ActuatorKind::LinearMotor => "m",
+        ActuatorKind::MuscleTendon => "",
+    };
+    format!(
+        "{} ({})\nActuator type: {:?}\nJoint: {}\n{}\nController: {:?}\nFrequency: {:.3} Hz\nAmplitude: {:.3} {}",
+        actuator.name,
+        actuator.id,
+        actuator.kind,
+        actuator.joint_id,
+        limit,
+        behavior.controller,
+        frequency_hz,
+        amplitude,
+        amplitude_unit,
+    )
+}
+
+fn apply_selected_actuator_controller_edit(
+    selected_actuator_id: Option<&str>,
+    selected_behavior_id: Option<&str>,
+    project: &mut DraftProject,
+    inputs: &Query<(&EditableText, &ActuatorInspectorFieldInput)>,
+    status: &mut Query<&mut Text, With<ActuatorInspectorStatusLabel>>,
+) {
+    let Some(actuator_id) = selected_actuator_id else {
+        set_actuator_inspector_status(
+            status,
+            "Select a supported powered joint before applying actuator changes.",
+        );
+        return;
+    };
+    let Some(behavior_id) = selected_behavior_id else {
+        set_actuator_inspector_status(status, "No supported oscillator controller is selected.");
+        return;
+    };
+    let Some(actuator_index) = project
+        .organism
+        .actuators
+        .iter()
+        .position(|actuator| actuator.id == actuator_id)
+    else {
+        set_actuator_inspector_status(status, "The selected actuator no longer exists.");
+        return;
+    };
+    let Some(behavior_index) = project
+        .motion
+        .behaviors
+        .iter()
+        .position(|behavior| behavior.id == behavior_id)
+    else {
+        set_actuator_inspector_status(status, "The selected controller behavior no longer exists.");
+        return;
+    };
+
+    let mut actuator = project.organism.actuators[actuator_index].clone();
+    let mut behavior = project.motion.behaviors[behavior_index].clone();
+    let Some(actuator_name) =
+        actuator_inspector_field_text(inputs, ActuatorInspectorField::ActuatorName)
+    else {
+        set_actuator_inspector_status(status, "Enter a non-empty actuator name.");
+        return;
+    };
+    let (max_force_n, max_torque_nm) = match actuator.kind {
+        ActuatorKind::AngularMotor => {
+            let Some(max_torque) =
+                actuator_inspector_field_number(inputs, ActuatorInspectorField::MaxTorque)
+            else {
+                set_actuator_inspector_status(status, "Enter a positive maximum torque in N m.");
+                return;
+            };
+            (None, Some(max_torque))
+        }
+        ActuatorKind::LinearMotor => {
+            let Some(max_force) =
+                actuator_inspector_field_number(inputs, ActuatorInspectorField::MaxForce)
+            else {
+                set_actuator_inspector_status(status, "Enter a positive maximum force in newtons.");
+                return;
+            };
+            (Some(max_force), None)
+        }
+        ActuatorKind::MuscleTendon => {
+            set_actuator_inspector_status(
+                status,
+                "Muscle-tendon runtime actuation is not implemented yet.",
+            );
+            return;
+        }
+    };
+    let Some(behavior_name) =
+        actuator_inspector_field_text(inputs, ActuatorInspectorField::BehaviorName)
+    else {
+        set_actuator_inspector_status(status, "Enter a non-empty controller behavior name.");
+        return;
+    };
+    let Some(frequency_hz) =
+        actuator_inspector_field_number(inputs, ActuatorInspectorField::Frequency)
+    else {
+        set_actuator_inspector_status(status, "Enter a positive oscillator frequency in Hz.");
+        return;
+    };
+    let Some(amplitude) =
+        actuator_inspector_field_number(inputs, ActuatorInspectorField::Amplitude)
+    else {
+        set_actuator_inspector_status(status, "Enter a non-negative oscillator amplitude.");
+        return;
+    };
+
+    if let Err(error) = apply_actuator_controller_edit(
+        &mut actuator,
+        &mut behavior,
+        ActuatorControllerEdit {
+            actuator_name,
+            max_force_n,
+            max_torque_nm,
+            behavior_name,
+            frequency_hz,
+            amplitude,
+        },
+    ) {
+        set_actuator_inspector_status(status, &error.to_string());
+        return;
+    }
+
+    project.organism.actuators[actuator_index] = actuator;
+    project.motion.behaviors[behavior_index] = behavior;
+    set_actuator_inspector_status(
+        status,
+        "Applied actuator limits and oscillator parameters to the live controller.",
+    );
+}
+
+fn actuator_inspector_field_text(
+    inputs: &Query<(&EditableText, &ActuatorInspectorFieldInput)>,
+    field: ActuatorInspectorField,
+) -> Option<String> {
+    inputs
+        .iter()
+        .find(|(_, marker)| marker.0 == field)
+        .map(|(input, _)| input.value().to_string())
+}
+
+fn actuator_inspector_field_number(
+    inputs: &Query<(&EditableText, &ActuatorInspectorFieldInput)>,
+    field: ActuatorInspectorField,
+) -> Option<f32> {
+    actuator_inspector_field_text(inputs, field)?
+        .trim()
+        .parse::<f32>()
+        .ok()
+}
+
+fn set_actuator_inspector_status(
+    labels: &mut Query<&mut Text, With<ActuatorInspectorStatusLabel>>,
+    message: &str,
+) {
+    for mut label in labels.iter_mut() {
+        label.0 = message.to_owned();
+    }
+}
+
 fn update_joint_inspector(
     selection: Res<JointSelection>,
     project: Res<DraftProject>,
