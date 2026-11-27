@@ -465,6 +465,45 @@ pub enum MotionGoal {
         frequency_hz: f32,
         amplitude: f32,
     },
+    /// Selects a generalized motor target from the current environment-contact state.
+    /// Targets are radians for angular motors and meters for linear motors.
+    ContactDrivenActuator {
+        sensor_id: String,
+        actuator_id: String,
+        contact_target_position: f32,
+        free_target_position: f32,
+    },
+}
+
+/// A persistent declaration that a rigid body part contributes physical
+/// environment-contact readings to motion controllers.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContactSensor {
+    pub id: String,
+    pub part_id: String,
+}
+
+/// Transient contact data extracted from the current physics step.
+///
+/// Vectors are expressed in world coordinates. Impulse is measured in N·s
+/// (equivalently kg·m/s); approach speed is measured in m/s.
+/// This runtime reading is intentionally not serialized as organism configuration.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ContactReading {
+    /// Number of physical contact points against configured environment surfaces.
+    pub contact_count: u32,
+    /// Mean unit contact normal pointing from the environment into the sensed body.
+    pub support_normal_world: Vec3,
+    /// Sum of absolute normal impulses over the current contact points, in N·s.
+    pub total_normal_impulse_ns: f32,
+    /// Largest positive closing speed at a contact point, in m/s.
+    pub max_approach_speed_mps: f32,
+}
+
+impl ContactReading {
+    pub fn is_in_contact(self) -> bool {
+        self.contact_count > 0
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -480,6 +519,9 @@ pub struct MotionDefinition {
     pub format: String,
     pub schema_version: u32,
     pub organism_id: String,
+    /// Persistent sensor-to-body-part bindings. Runtime readings are not stored here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contact_sensors: Vec<ContactSensor>,
     pub behaviors: Vec<Behavior>,
 }
 
@@ -489,6 +531,7 @@ impl MotionDefinition {
             format: MOTION_FORMAT.into(),
             schema_version: SCHEMA_VERSION,
             organism_id: organism_id.into(),
+            contact_sensors: Vec::new(),
             behaviors: Vec::new(),
         }
     }
@@ -513,7 +556,38 @@ impl MotionDefinition {
             .iter()
             .map(|actuator| actuator.id.as_str())
             .collect();
+        let part_ids: BTreeSet<&str> = organism.parts.iter().map(|part| part.id.as_str()).collect();
+        let mut sensor_ids = BTreeSet::new();
+        let mut sensor_part_ids = BTreeSet::new();
+        for sensor in &self.contact_sensors {
+            if sensor.id.trim().is_empty() {
+                errors.push("contact sensor id cannot be empty".into());
+            } else if !sensor_ids.insert(sensor.id.as_str()) {
+                errors.push(format!("duplicate contact sensor id: {}", sensor.id));
+            }
+            if !sensor_part_ids.insert(sensor.part_id.as_str()) {
+                errors.push(format!(
+                    "multiple contact sensors reference body part {}",
+                    sensor.part_id
+                ));
+            }
+            if !part_ids.contains(sensor.part_id.as_str()) {
+                errors.push(format!(
+                    "contact sensor {} references missing body part {}",
+                    sensor.id, sensor.part_id
+                ));
+            } else if let Some(part) = organism.parts.iter().find(|part| part.id == sensor.part_id)
+                && !matches!(&part.physics, BodyPhysics::Rigid(_))
+            {
+                errors.push(format!(
+                    "contact sensor {} requires a rigid body part",
+                    sensor.id
+                ));
+            }
+        }
+
         let mut behavior_ids = BTreeSet::new();
+        let mut actuator_controller_ids = BTreeSet::new();
         for behavior in &self.behaviors {
             if behavior.id.trim().is_empty() {
                 errors.push("behavior id cannot be empty".into());
@@ -546,12 +620,78 @@ impl MotionDefinition {
                                 "behavior {} references missing actuator {}",
                                 behavior.id, actuator_id
                             ));
+                        } else if !actuator_controller_ids.insert(actuator_id.as_str()) {
+                            errors.push(format!(
+                                "multiple controller goals target actuator {}",
+                                actuator_id
+                            ));
                         }
                         if !frequency_hz.is_finite() || *frequency_hz <= 0.0 {
                             errors.push(format!("behavior {} has invalid frequency", behavior.id));
                         }
                         if !amplitude.is_finite() || *amplitude < 0.0 {
                             errors.push(format!("behavior {} has invalid amplitude", behavior.id));
+                        }
+                    }
+                    MotionGoal::ContactDrivenActuator {
+                        sensor_id,
+                        actuator_id,
+                        contact_target_position,
+                        free_target_position,
+                    } => {
+                        if behavior.controller != ControllerKind::ContactDriven {
+                            errors.push(format!(
+                                "behavior {} uses a contact-driven goal with a non-contact controller",
+                                behavior.id
+                            ));
+                        }
+                        if !sensor_ids.contains(sensor_id.as_str()) {
+                            errors.push(format!(
+                                "behavior {} references missing contact sensor {}",
+                                behavior.id, sensor_id
+                            ));
+                        }
+                        if !actuator_ids.contains(actuator_id.as_str()) {
+                            errors.push(format!(
+                                "behavior {} references missing actuator {}",
+                                behavior.id, actuator_id
+                            ));
+                        } else if !actuator_controller_ids.insert(actuator_id.as_str()) {
+                            errors.push(format!(
+                                "multiple controller goals target actuator {}",
+                                actuator_id
+                            ));
+                        } else if let Some(actuator) = organism
+                            .actuators
+                            .iter()
+                            .find(|actuator| actuator.id == *actuator_id)
+                        {
+                            let joint = organism
+                                .joints
+                                .iter()
+                                .find(|joint| joint.id == actuator.joint_id);
+                            let supported_joint = match actuator.kind {
+                                ActuatorKind::AngularMotor => {
+                                    joint.is_some_and(|joint| joint.kind == JointKind::Hinge)
+                                }
+                                ActuatorKind::LinearMotor => {
+                                    joint.is_some_and(|joint| joint.kind == JointKind::Slider)
+                                }
+                                ActuatorKind::MuscleTendon => false,
+                            };
+                            if !supported_joint {
+                                errors.push(format!(
+                                    "behavior {} references an actuator without a supported motor joint",
+                                    behavior.id
+                                ));
+                            }
+                        }
+                        if !contact_target_position.is_finite() || !free_target_position.is_finite()
+                        {
+                            errors.push(format!(
+                                "behavior {} has non-finite contact target positions",
+                                behavior.id
+                            ));
                         }
                     }
                 }
@@ -653,6 +793,207 @@ mod tests {
             errors
                 .iter()
                 .any(|error| error.contains("missing its rest length"))
+        );
+    }
+
+    fn sample_contact_motion() -> (Organism, MotionDefinition) {
+        let mut organism = Organism::new("Contact sensing test");
+        organism.parts = vec![sample_part("body"), sample_part("foot")];
+        organism.joints.push(Joint {
+            id: "hinge-1".into(),
+            name: "Foot hinge".into(),
+            kind: JointKind::Hinge,
+            parent_part_id: "body".into(),
+            child_part_id: "foot".into(),
+            anchor_parent_m: Vec3::ZERO,
+            anchor_child_m: Vec3::ZERO,
+            limits: None,
+            rest_length_m: None,
+        });
+        organism.actuators.push(Actuator {
+            id: "motor-1".into(),
+            name: "Foot motor".into(),
+            joint_id: "hinge-1".into(),
+            kind: ActuatorKind::AngularMotor,
+            max_force_n: None,
+            max_torque_nm: Some(10.0),
+        });
+
+        let mut motion = MotionDefinition::new(organism.id.clone());
+        motion.contact_sensors.push(ContactSensor {
+            id: "foot-contact".into(),
+            part_id: "foot".into(),
+        });
+        motion.behaviors.push(Behavior {
+            id: "contact-reflex".into(),
+            name: "Contact reflex".into(),
+            controller: ControllerKind::ContactDriven,
+            goals: vec![MotionGoal::ContactDrivenActuator {
+                sensor_id: "foot-contact".into(),
+                actuator_id: "motor-1".into(),
+                contact_target_position: 0.5,
+                free_target_position: 0.0,
+            }],
+        });
+        (organism, motion)
+    }
+
+    #[test]
+    fn accepts_a_valid_contact_sensor_and_contact_driven_motor_goal() {
+        let (organism, motion) = sample_contact_motion();
+        assert!(motion.validate_for(&organism).is_ok());
+    }
+
+    #[test]
+    fn rejects_duplicate_and_dangling_contact_sensors() {
+        let (organism, mut motion) = sample_contact_motion();
+        motion
+            .contact_sensors
+            .push(motion.contact_sensors[0].clone());
+        let errors = motion
+            .validate_for(&organism)
+            .expect_err("duplicate IDs and part binding");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("duplicate contact sensor id"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("multiple contact sensors"))
+        );
+
+        let (organism, mut motion) = sample_contact_motion();
+        motion.contact_sensors[0].part_id = "missing-part".into();
+        let errors = motion
+            .validate_for(&organism)
+            .expect_err("missing sensor part");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("references missing body part"))
+        );
+    }
+
+    #[test]
+    fn rejects_soft_body_contact_sensors() {
+        let (mut organism, motion) = sample_contact_motion();
+        organism.parts[1].physics = BodyPhysics::Soft(SoftBodyProperties {
+            density_kg_m3: 1000.0,
+            elastic_modulus_pa: 100_000.0,
+            damping_ratio: 0.5,
+            resolution: 4,
+        });
+        let errors = motion
+            .validate_for(&organism)
+            .expect_err("soft bodies have no runtime solver");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("requires a rigid body part"))
+        );
+    }
+
+    #[test]
+    fn rejects_contact_goals_with_invalid_controller_sensor_or_target() {
+        let (organism, mut motion) = sample_contact_motion();
+        motion.behaviors[0].controller = ControllerKind::Oscillator;
+        let errors = motion
+            .validate_for(&organism)
+            .expect_err("controller kind must match goal");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("non-contact controller"))
+        );
+
+        let (organism, mut motion) = sample_contact_motion();
+        motion.behaviors[0].controller = ControllerKind::ContactDriven;
+        motion.contact_sensors.clear();
+        let MotionGoal::ContactDrivenActuator {
+            sensor_id,
+            contact_target_position,
+            ..
+        } = &mut motion.behaviors[0].goals[0]
+        else {
+            unreachable!();
+        };
+        *sensor_id = "missing-sensor".into();
+        *contact_target_position = f32::NAN;
+        let errors = motion
+            .validate_for(&organism)
+            .expect_err("bad sensor and target");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("missing contact sensor"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("non-finite contact target"))
+        );
+    }
+
+    #[test]
+    fn rejects_contact_driven_motors_without_a_matching_supported_joint() {
+        let (mut organism, motion) = sample_contact_motion();
+        organism.joints[0].kind = JointKind::Ball;
+        let errors = motion
+            .validate_for(&organism)
+            .expect_err("motor needs a supported joint");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("supported motor joint"))
+        );
+
+        let (mut organism, motion) = sample_contact_motion();
+        organism.actuators[0].kind = ActuatorKind::MuscleTendon;
+        let errors = motion
+            .validate_for(&organism)
+            .expect_err("muscle tendon is not implemented");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("supported motor joint"))
+        );
+    }
+
+    #[test]
+    fn rejects_multiple_controller_goals_for_one_motor() {
+        let (organism, mut motion) = sample_contact_motion();
+        motion.behaviors.push(Behavior {
+            id: "second-controller".into(),
+            name: "Competing oscillator".into(),
+            controller: ControllerKind::Oscillator,
+            goals: vec![MotionGoal::OscillateActuator {
+                actuator_id: "motor-1".into(),
+                frequency_hz: 1.0,
+                amplitude: 0.25,
+            }],
+        });
+
+        let errors = motion
+            .validate_for(&organism)
+            .expect_err("one actuator cannot have competing controllers");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("multiple controller goals"))
+        );
+    }
+
+    #[test]
+    fn contact_reading_reports_contact_and_default_is_clear() {
+        assert!(!ContactReading::default().is_in_contact());
+        assert!(
+            ContactReading {
+                contact_count: 1,
+                ..ContactReading::default()
+            }
+            .is_in_contact()
         );
     }
 

@@ -90,6 +90,24 @@ mod tests {
     use organism_core::{MotionDefinition, Organism};
 
     #[test]
+    fn older_motion_documents_default_to_no_contact_sensors() {
+        let organism = Organism::new("Legacy organism");
+        let legacy_motion_json = r#"{
+            "format": "organism_motion",
+            "schema_version": 1,
+            "organism_id": "organism-1",
+            "behaviors": []
+        }"#;
+
+        let motion: MotionDefinition =
+            serde_json::from_str(legacy_motion_json).expect("legacy motion document");
+        assert!(motion.contact_sensors.is_empty());
+
+        let encoded = encode_motion(&organism, &motion).expect("valid legacy motion");
+        assert!(!encoded.contains("contact_sensors"));
+    }
+
+    #[test]
     fn encodes_two_independent_json_documents() {
         let organism = Organism::new("Test organism");
         let motion = MotionDefinition::new(organism.id.clone());

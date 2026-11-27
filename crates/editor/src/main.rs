@@ -1,5 +1,6 @@
 mod actuator_editing;
 mod camera_controls;
+mod contact_sensing;
 mod joint_editing;
 mod part_editing;
 mod runtime_geometry;
@@ -13,15 +14,17 @@ use bevy::text::EditableText;
 use bevy::ui_widgets::{Activate, Button, TextInput, observe};
 use bevy::window::PrimaryWindow;
 use camera_controls::CameraControlsPlugin;
+use contact_sensing::{ContactReadingAccumulator, normal_toward_sensor};
 use joint_editing::{JointEdit, apply_joint_edit};
 use organism_core::{
-    Actuator, ActuatorKind, Behavior, BodyPart, BodyPhysics, ControllerKind, Geometry, Joint,
-    JointKind, MotionDefinition, MotionGoal, Organism, RigidBodyProperties, Transform3,
-    Vec3 as DataVec3,
+    Actuator, ActuatorKind, Behavior, BodyPart, BodyPhysics, ContactReading, ContactSensor,
+    ControllerKind, Geometry, Joint, JointKind, MotionDefinition, MotionGoal, Organism,
+    RigidBodyProperties, Transform3, Vec3 as DataVec3,
 };
 use organism_serialization::save_project;
 use part_editing::{PartEdit, apply_part_edit};
 use runtime_geometry::build_runtime_geometry;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 const EXPORT_DIRECTORY: &str = "exports";
@@ -29,6 +32,8 @@ const PART_FRICTION: f32 = 0.75;
 const PART_RESTITUTION: f32 = 0.0;
 const PART_LINEAR_DAMPING: f32 = 0.03;
 const PART_ANGULAR_DAMPING: f32 = 0.05;
+const DEFAULT_CONTACT_HINGE_TARGET_RAD: f32 = 0.55;
+const DEFAULT_CONTACT_SLIDER_TARGET_M: f32 = 0.2;
 
 fn main() {
     App::new()
@@ -41,6 +46,7 @@ fn main() {
         ))
         .insert_resource(ClearColor(Color::srgb(0.025, 0.03, 0.045)))
         .init_resource::<DraftProject>()
+        .init_resource::<ContactSensorReadings>()
         .init_resource::<EditorTool>()
         .init_resource::<PlacementSettings>()
         .init_resource::<PartSelection>()
@@ -61,6 +67,13 @@ fn main() {
                 update_actuator_inspector,
                 draw_selected_part_outline,
             ),
+        )
+        .add_systems(
+            PhysicsSchedule,
+            (sample_contact_sensors, drive_contact_driven_behaviors)
+                .chain()
+                .after(PhysicsStepSystems::Solver)
+                .before(PhysicsStepSystems::Finalize),
         )
         .run();
 }
@@ -221,8 +234,10 @@ enum EditorTool {
     ConnectBall,
     ConnectHinge,
     ConnectPoweredHinge,
+    ConnectContactHinge,
     ConnectSlider,
     ConnectPoweredSlider,
+    ConnectContactSlider,
     ConnectDistance,
 }
 
@@ -231,19 +246,30 @@ impl EditorTool {
         match self {
             Self::ConnectFixed => Some(JointKind::Fixed),
             Self::ConnectBall => Some(JointKind::Ball),
-            Self::ConnectHinge | Self::ConnectPoweredHinge => Some(JointKind::Hinge),
-            Self::ConnectSlider | Self::ConnectPoweredSlider => Some(JointKind::Slider),
+            Self::ConnectHinge | Self::ConnectPoweredHinge | Self::ConnectContactHinge => {
+                Some(JointKind::Hinge)
+            }
+            Self::ConnectSlider | Self::ConnectPoweredSlider | Self::ConnectContactSlider => {
+                Some(JointKind::Slider)
+            }
             Self::ConnectDistance => Some(JointKind::Distance),
             Self::Select | Self::PlaceSphere | Self::PlaceCuboid | Self::PlaceCapsule => None,
         }
     }
 
     fn is_powered_hinge(self) -> bool {
-        self == Self::ConnectPoweredHinge
+        matches!(self, Self::ConnectPoweredHinge | Self::ConnectContactHinge)
     }
 
     fn is_powered_slider(self) -> bool {
-        self == Self::ConnectPoweredSlider
+        matches!(
+            self,
+            Self::ConnectPoweredSlider | Self::ConnectContactSlider
+        )
+    }
+
+    fn is_contact_driven(self) -> bool {
+        matches!(self, Self::ConnectContactHinge | Self::ConnectContactSlider)
     }
 
     fn geometry(self, size_scale: f32) -> Option<Geometry> {
@@ -266,8 +292,10 @@ impl EditorTool {
             | Self::ConnectBall
             | Self::ConnectHinge
             | Self::ConnectPoweredHinge
+            | Self::ConnectContactHinge
             | Self::ConnectSlider
             | Self::ConnectPoweredSlider
+            | Self::ConnectContactSlider
             | Self::ConnectDistance
             | Self::Select => None,
         }
@@ -285,6 +313,12 @@ struct PartTag {
     pick_radius: f32,
 }
 
+#[derive(Component)]
+struct EnvironmentSurface;
+
+#[derive(Resource, Default)]
+struct ContactSensorReadings(BTreeMap<String, ContactReading>);
+
 #[derive(Component, Clone, Copy)]
 enum EditorButtonAction {
     PlaceSphere,
@@ -295,8 +329,10 @@ enum EditorButtonAction {
     ConnectBall,
     ConnectHinge,
     ConnectPoweredHinge,
+    ConnectContactHinge,
     ConnectSlider,
     ConnectPoweredSlider,
+    ConnectContactSlider,
     ConnectDistance,
     SetSizeSmall,
     SetSizeStandard,
@@ -324,6 +360,7 @@ fn setup_scene(
         Collider::cuboid(floor_size * 0.5, 0.1, floor_size * 0.5),
         Friction::new(0.85),
         Restitution::new(0.0),
+        EnvironmentSurface,
     ));
 
     commands.spawn((
@@ -810,6 +847,12 @@ fn setup_editor_panel(mut commands: Commands) {
             );
             action_button!(
                 panel,
+                "Connect contact-driven hinge",
+                EditorButtonAction::ConnectContactHinge,
+                Color::srgb(0.24, 0.3, 0.36)
+            );
+            action_button!(
+                panel,
                 "Connect slider",
                 EditorButtonAction::ConnectSlider,
                 Color::srgb(0.16, 0.19, 0.26)
@@ -819,6 +862,12 @@ fn setup_editor_panel(mut commands: Commands) {
                 "Connect powered slider",
                 EditorButtonAction::ConnectPoweredSlider,
                 Color::srgb(0.36, 0.25, 0.12)
+            );
+            action_button!(
+                panel,
+                "Connect contact-driven slider",
+                EditorButtonAction::ConnectContactSlider,
+                Color::srgb(0.24, 0.3, 0.36)
             );
             action_button!(
                 panel,
@@ -844,7 +893,7 @@ fn setup_editor_panel(mut commands: Commands) {
 
             panel.spawn((
                 Text::new(
-                    "Place: click the ground\nConnect: select two parts\nJoints connect at their midpoint\nUnits: meters / kilograms / seconds",
+                    "Place: click the ground\nConnect: select two parts\nContact-driven joints sense the second selected part against the floor\nJoints connect at their midpoint\nUnits: meters / kilograms / seconds",
                 ),
                 TextFont {
                     font_size: FontSize::Px(11.0),
@@ -897,8 +946,10 @@ fn handle_editor_button_activated(
         EditorButtonAction::ConnectBall => *tool = EditorTool::ConnectBall,
         EditorButtonAction::ConnectHinge => *tool = EditorTool::ConnectHinge,
         EditorButtonAction::ConnectPoweredHinge => *tool = EditorTool::ConnectPoweredHinge,
+        EditorButtonAction::ConnectContactHinge => *tool = EditorTool::ConnectContactHinge,
         EditorButtonAction::ConnectSlider => *tool = EditorTool::ConnectSlider,
         EditorButtonAction::ConnectPoweredSlider => *tool = EditorTool::ConnectPoweredSlider,
+        EditorButtonAction::ConnectContactSlider => *tool = EditorTool::ConnectContactSlider,
         EditorButtonAction::ConnectDistance => *tool = EditorTool::ConnectDistance,
         EditorButtonAction::SetSizeSmall => placement.size_scale = 0.5,
         EditorButtonAction::SetSizeStandard => placement.size_scale = 1.0,
@@ -1089,6 +1140,7 @@ fn edit_from_viewport(
         joint_kind,
         tool.is_powered_hinge(),
         tool.is_powered_slider(),
+        tool.is_contact_driven(),
         ray.origin,
         ray_direction,
         &part_query,
@@ -1256,6 +1308,7 @@ fn connect_body_parts(
     kind: JointKind,
     powered_hinge: bool,
     powered_slider: bool,
+    contact_driven: bool,
     ray_origin: Vec3,
     ray_direction: Vec3,
     part_query: &Query<(Entity, &GlobalTransform, &PartTag)>,
@@ -1406,8 +1459,8 @@ fn connect_body_parts(
         id: joint_id.clone(),
         name: format!("{parent_id} to {child_id} {kind:?}"),
         kind,
-        parent_part_id: parent_id,
-        child_part_id: child_id,
+        parent_part_id: parent_id.clone(),
+        child_part_id: child_id.clone(),
         anchor_parent_m: DataVec3::new(anchor_parent.x, anchor_parent.y, anchor_parent.z),
         anchor_child_m: DataVec3::new(anchor_child.x, anchor_child.y, anchor_child.z),
         limits: None,
@@ -1418,24 +1471,24 @@ fn connect_body_parts(
         let actuator_sequence = project.next_actuator_id;
         project.next_actuator_id += 1;
         let actuator_id = format!("actuator-{actuator_sequence:04}");
-        let (actuator_kind, max_force_n, max_torque_nm, default_amplitude, name) = if powered_hinge
-        {
-            (
-                ActuatorKind::AngularMotor,
-                None,
-                Some(10.0),
-                0.55,
-                format!("Powered hinge {actuator_sequence}"),
-            )
-        } else {
-            (
-                ActuatorKind::LinearMotor,
-                Some(20.0),
-                None,
-                0.2,
-                format!("Powered slider {actuator_sequence}"),
-            )
-        };
+        let (actuator_kind, max_force_n, max_torque_nm, default_actuation_excursion, name) =
+            if powered_hinge {
+                (
+                    ActuatorKind::AngularMotor,
+                    None,
+                    Some(10.0),
+                    DEFAULT_CONTACT_HINGE_TARGET_RAD,
+                    format!("Powered hinge {actuator_sequence}"),
+                )
+            } else {
+                (
+                    ActuatorKind::LinearMotor,
+                    Some(20.0),
+                    None,
+                    DEFAULT_CONTACT_SLIDER_TARGET_M,
+                    format!("Powered slider {actuator_sequence}"),
+                )
+            };
         project.organism.actuators.push(Actuator {
             id: actuator_id.clone(),
             name,
@@ -1444,15 +1497,60 @@ fn connect_body_parts(
             max_force_n,
             max_torque_nm,
         });
+        let (controller, goals, behavior_name) = if contact_driven {
+            let existing_sensor = project
+                .motion
+                .contact_sensors
+                .iter()
+                .find(|sensor| sensor.part_id == child_id)
+                .map(|sensor| sensor.id.clone());
+            let sensor_id = if let Some(sensor_id) = existing_sensor {
+                sensor_id
+            } else {
+                let base_id = format!("contact-sensor-{child_id}");
+                let mut sensor_id = base_id.clone();
+                let mut suffix = 2_u64;
+                while project
+                    .motion
+                    .contact_sensors
+                    .iter()
+                    .any(|sensor| sensor.id == sensor_id)
+                {
+                    sensor_id = format!("{base_id}-{suffix}");
+                    suffix += 1;
+                }
+                project.motion.contact_sensors.push(ContactSensor {
+                    id: sensor_id.clone(),
+                    part_id: child_id.clone(),
+                });
+                sensor_id
+            };
+            (
+                ControllerKind::ContactDriven,
+                vec![MotionGoal::ContactDrivenActuator {
+                    sensor_id,
+                    actuator_id,
+                    contact_target_position: default_actuation_excursion,
+                    free_target_position: 0.0,
+                }],
+                format!("Contact response {joint_id}"),
+            )
+        } else {
+            (
+                ControllerKind::Oscillator,
+                vec![MotionGoal::OscillateActuator {
+                    actuator_id,
+                    frequency_hz: 0.5,
+                    amplitude: default_actuation_excursion,
+                }],
+                format!("Oscillate {joint_id}"),
+            )
+        };
         project.motion.behaviors.push(Behavior {
             id: format!("behavior-{actuator_sequence:04}"),
-            name: format!("Oscillate {joint_id}"),
-            controller: ControllerKind::Oscillator,
-            goals: vec![MotionGoal::OscillateActuator {
-                actuator_id,
-                frequency_hz: 0.5,
-                amplitude: default_amplitude,
-            }],
+            name: behavior_name,
+            controller,
+            goals,
         });
     }
     info!("Created {kind:?} connection");
@@ -1507,6 +1605,129 @@ fn drive_actuator_behaviors(
                                 joint.motor.max_force = max_force_n;
                             }
                             joint.motor.target_position = target;
+                            break;
+                        }
+                    }
+                }
+                ActuatorKind::MuscleTendon => {}
+            }
+        }
+    }
+}
+
+/// Samples real, touching Avian contacts against explicitly tagged environment surfaces.
+fn sample_contact_sensors(
+    project: Res<DraftProject>,
+    part_entities: Query<(Entity, &PartTag)>,
+    environment_surfaces: Query<(), With<EnvironmentSurface>>,
+    collisions: Collisions,
+    mut readings: ResMut<ContactSensorReadings>,
+) {
+    readings.0.clear();
+
+    for sensor in &project.motion.contact_sensors {
+        let mut accumulator = ContactReadingAccumulator::default();
+        if let Some((part_entity, _)) = part_entities
+            .iter()
+            .find(|(_, tag)| tag.id == sensor.part_id)
+        {
+            for pair in collisions.collisions_with(part_entity) {
+                let (other_entity, sensor_is_first) = if pair.collider1 == part_entity {
+                    (pair.collider2, true)
+                } else if pair.collider2 == part_entity {
+                    (pair.collider1, false)
+                } else {
+                    continue;
+                };
+                if !pair.generates_constraints() || !environment_surfaces.contains(other_entity) {
+                    continue;
+                }
+
+                for manifold in &pair.manifolds {
+                    let normal_world =
+                        DataVec3::new(manifold.normal.x, manifold.normal.y, manifold.normal.z);
+                    let Some(normal_toward_body_world) =
+                        normal_toward_sensor(normal_world, sensor_is_first)
+                    else {
+                        continue;
+                    };
+                    for contact in &manifold.points {
+                        accumulator.add_contact(
+                            normal_toward_body_world,
+                            contact.normal_impulse,
+                            contact.normal_speed,
+                        );
+                    }
+                }
+            }
+        }
+
+        readings.0.insert(sensor.id.clone(), accumulator.finish());
+    }
+}
+
+/// Applies the contact/free target after the solver; the resulting motor target is
+/// consumed by the next fixed physics step. Existing spring-damper settings are untouched.
+fn drive_contact_driven_behaviors(
+    project: Res<DraftProject>,
+    readings: Res<ContactSensorReadings>,
+    mut angular_joints: Query<(&mut RevoluteJoint, &RuntimeJointTag)>,
+    mut linear_joints: Query<(&mut PrismaticJoint, &RuntimeJointTag)>,
+) {
+    for behavior in &project.motion.behaviors {
+        if behavior.controller != ControllerKind::ContactDriven {
+            continue;
+        }
+
+        for goal in &behavior.goals {
+            let MotionGoal::ContactDrivenActuator {
+                sensor_id,
+                actuator_id,
+                contact_target_position,
+                free_target_position,
+            } = goal
+            else {
+                continue;
+            };
+            let in_contact = readings
+                .0
+                .get(sensor_id)
+                .copied()
+                .unwrap_or_default()
+                .is_in_contact();
+            let target_position = if in_contact {
+                *contact_target_position
+            } else {
+                *free_target_position
+            };
+            let Some(actuator) = project
+                .organism
+                .actuators
+                .iter()
+                .find(|actuator| actuator.id == *actuator_id)
+            else {
+                continue;
+            };
+
+            match actuator.kind {
+                ActuatorKind::AngularMotor => {
+                    for (mut joint, tag) in &mut angular_joints {
+                        if tag.id == actuator.joint_id {
+                            if let Some(max_torque_nm) = actuator.max_torque_nm {
+                                joint.motor.max_torque = max_torque_nm;
+                            }
+                            joint.motor.target_position = target_position;
+                            break;
+                        }
+                    }
+                }
+                ActuatorKind::LinearMotor => {
+                    for (mut joint, tag) in &mut linear_joints {
+                        if tag.id == actuator.joint_id {
+                            if let Some(max_force_n) = actuator.max_force_n {
+                                joint.motor.max_force = max_force_n;
+                            }
+                            joint.motor.target_position = target_position;
                             break;
                         }
                     }
@@ -2057,7 +2278,21 @@ fn selected_actuator_controller<'a>(
             })
     });
     let Some(behavior) = behaviors.next() else {
-        return Err("No supported oscillator behavior is linked to this actuator.");
+        let uses_contact_control = project.motion.behaviors.iter().any(|behavior| {
+            behavior.controller == ControllerKind::ContactDriven
+                && behavior.goals.iter().any(|goal| {
+                    matches!(
+                        goal,
+                        MotionGoal::ContactDrivenActuator { actuator_id, .. }
+                            if actuator_id == &actuator.id
+                    )
+                })
+        });
+        return Err(if uses_contact_control {
+            "This actuator uses a contact-driven controller; edit its target positions in the motion document."
+        } else {
+            "No supported oscillator behavior is linked to this actuator."
+        });
     };
     if behaviors.next().is_some() {
         return Err(
@@ -2613,5 +2848,167 @@ fn ray_sphere_distance(
         Some(far)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod contact_controller_tests {
+    use super::*;
+
+    #[test]
+    fn contact_readings_drive_real_hinge_and_slider_motor_targets() {
+        let mut project = DraftProject::default();
+        project.organism.actuators = vec![
+            Actuator {
+                id: "hinge-actuator".into(),
+                name: "Hinge motor".into(),
+                joint_id: "hinge-joint".into(),
+                kind: ActuatorKind::AngularMotor,
+                max_force_n: None,
+                max_torque_nm: Some(14.0),
+            },
+            Actuator {
+                id: "slider-actuator".into(),
+                name: "Slider motor".into(),
+                joint_id: "slider-joint".into(),
+                kind: ActuatorKind::LinearMotor,
+                max_force_n: Some(22.0),
+                max_torque_nm: None,
+            },
+        ];
+        project.motion.behaviors.push(Behavior {
+            id: "contact-controller".into(),
+            name: "Contact response".into(),
+            controller: ControllerKind::ContactDriven,
+            goals: vec![
+                MotionGoal::ContactDrivenActuator {
+                    sensor_id: "foot-sensor".into(),
+                    actuator_id: "hinge-actuator".into(),
+                    contact_target_position: 0.55,
+                    free_target_position: 0.0,
+                },
+                MotionGoal::ContactDrivenActuator {
+                    sensor_id: "slider-sensor".into(),
+                    actuator_id: "slider-actuator".into(),
+                    contact_target_position: 0.2,
+                    free_target_position: -0.1,
+                },
+            ],
+        });
+
+        let mut readings = ContactSensorReadings::default();
+        readings.0.insert(
+            "foot-sensor".into(),
+            ContactReading {
+                contact_count: 2,
+                support_normal_world: DataVec3::new(0.0, 1.0, 0.0),
+                total_normal_impulse_ns: 0.8,
+                max_approach_speed_mps: 0.4,
+            },
+        );
+        readings
+            .0
+            .insert("slider-sensor".into(), ContactReading::default());
+
+        let mut world = World::new();
+        world.insert_resource(project);
+        world.insert_resource(readings);
+
+        let parent = world.spawn_empty().id();
+        let child = world.spawn_empty().id();
+        let angular_motor = AngularMotor::new(MotorModel::SpringDamper {
+            frequency: 8.0,
+            damping_ratio: 1.0,
+        })
+        .with_target_position(-0.2)
+        .with_max_torque(10.0);
+        let angular_entity = world
+            .spawn((
+                RevoluteJoint::new(parent, child)
+                    .with_hinge_axis(Vec3::Z)
+                    .with_motor(angular_motor),
+                RuntimeJointTag {
+                    id: "hinge-joint".into(),
+                },
+            ))
+            .id();
+
+        let linear_motor = LinearMotor::new(MotorModel::SpringDamper {
+            frequency: 6.0,
+            damping_ratio: 0.75,
+        })
+        .with_target_position(0.8)
+        .with_max_force(20.0);
+        let linear_entity = world
+            .spawn((
+                PrismaticJoint::new(parent, child)
+                    .with_slider_axis(Vec3::X)
+                    .with_motor(linear_motor),
+                RuntimeJointTag {
+                    id: "slider-joint".into(),
+                },
+            ))
+            .id();
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(drive_contact_driven_behaviors);
+        schedule.run(&mut world);
+
+        let angular_joint = world
+            .get::<RevoluteJoint>(angular_entity)
+            .expect("runtime hinge joint");
+        assert_eq!(angular_joint.motor.target_position, 0.55);
+        assert_eq!(angular_joint.motor.max_torque, 14.0);
+        assert!(matches!(
+            angular_joint.motor.motor_model,
+            MotorModel::SpringDamper {
+                frequency: 8.0,
+                damping_ratio: 1.0
+            }
+        ));
+
+        let linear_joint = world
+            .get::<PrismaticJoint>(linear_entity)
+            .expect("runtime slider joint");
+        assert_eq!(linear_joint.motor.target_position, -0.1);
+        assert_eq!(linear_joint.motor.max_force, 22.0);
+        assert!(matches!(
+            linear_joint.motor.motor_model,
+            MotorModel::SpringDamper {
+                frequency: 6.0,
+                damping_ratio: 0.75
+            }
+        ));
+
+        world
+            .resource_mut::<ContactSensorReadings>()
+            .0
+            .get_mut("foot-sensor")
+            .expect("foot sensor reading")
+            .contact_count = 0;
+        world
+            .resource_mut::<ContactSensorReadings>()
+            .0
+            .get_mut("slider-sensor")
+            .expect("slider sensor reading")
+            .contact_count = 1;
+        schedule.run(&mut world);
+
+        assert_eq!(
+            world
+                .get::<RevoluteJoint>(angular_entity)
+                .expect("runtime hinge joint")
+                .motor
+                .target_position,
+            0.0
+        );
+        assert_eq!(
+            world
+                .get::<PrismaticJoint>(linear_entity)
+                .expect("runtime slider joint")
+                .motor
+                .target_position,
+            0.2
+        );
     }
 }
