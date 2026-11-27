@@ -197,7 +197,8 @@ mod tests {
             actuator_name: "  Updated hinge motor  ".into(),
             max_force_n: None,
             max_torque_nm: Some(24.0),
-            behavior_name: "  Faster hinge cycle  ".into(),            frequency_hz: 1.25,
+            behavior_name: "  Faster hinge cycle  ".into(),
+            frequency_hz: 1.25,
             amplitude: 0.8,
         }
     }
