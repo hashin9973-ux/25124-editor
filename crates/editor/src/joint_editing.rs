@@ -26,7 +26,9 @@ impl fmt::Display for JointEditError {
             Self::EmptyName => "Joint name cannot be empty.",
             Self::InvalidAnchor => "Joint anchor coordinates must be finite.",
             Self::MissingRestLength => "Distance joints require a rest length.",
-            Self::InvalidRestLength => "Distance rest length must be finite and greater than zero meters.",
+            Self::InvalidRestLength => {
+                "Distance rest length must be finite and greater than zero meters."
+            }
             Self::RestLengthNotAllowed => "Only distance joints can define a rest length.",
         };
         f.write_str(message)
