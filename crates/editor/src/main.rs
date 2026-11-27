@@ -405,7 +405,7 @@ fn setup_editor_panel(mut commands: Commands) {
                 Color::srgb(0.23, 0.3, 0.42)
             );
             panel.spawn((
-                Text::new("Select a sphere to edit its radius."),
+                Text::new("Select a rigid part to edit its properties."),
                 TextFont {
                     font_size: FontSize::Px(10.0),
                     ..default()
