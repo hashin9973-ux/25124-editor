@@ -182,7 +182,9 @@ mod tests {
             name: "Oscillate joint".into(),
             controller: ControllerKind::Oscillator,
             goals: vec![
-                MotionGoal::MaintainBalance { target_up: Vec3::Y },
+                MotionGoal::MaintainBalance {
+                    target_up: Vec3::new(0.0, 1.0, 0.0),
+                },
                 MotionGoal::OscillateActuator {
                     actuator_id: actuator_id.into(),
                     frequency_hz: 0.5,
