@@ -50,7 +50,9 @@ impl fmt::Display for ActuatorControllerEditError {
             Self::MultipleOscillatorGoals => {
                 "A behavior may contain only one oscillator goal for this actuator."
             }
-            Self::InvalidFrequency => "Oscillator frequency must be finite and greater than zero Hz.",
+            Self::InvalidFrequency => {
+                "Oscillator frequency must be finite and greater than zero Hz."
+            }
             Self::InvalidAmplitude => "Oscillator amplitude must be finite and non-negative.",
         };
         f.write_str(message)
@@ -180,9 +182,7 @@ mod tests {
             name: "Oscillate joint".into(),
             controller: ControllerKind::Oscillator,
             goals: vec![
-                MotionGoal::MaintainBalance {
-                    target_up: Vec3::Y,
-                },
+                MotionGoal::MaintainBalance { target_up: Vec3::Y },
                 MotionGoal::OscillateActuator {
                     actuator_id: actuator_id.into(),
                     frequency_hz: 0.5,
@@ -197,8 +197,7 @@ mod tests {
             actuator_name: "  Updated hinge motor  ".into(),
             max_force_n: None,
             max_torque_nm: Some(24.0),
-            behavior_name: "  Faster hinge cycle  ".into(),
-            frequency_hz: 1.25,
+            behavior_name: "  Faster hinge cycle  ".into(),            frequency_hz: 1.25,
             amplitude: 0.8,
         }
     }
@@ -293,11 +292,7 @@ mod tests {
         let original_actuator = actuator.clone();
         let original_controller = controller.clone();
         assert_eq!(
-            apply_actuator_controller_edit(
-                &mut actuator,
-                &mut controller,
-                angular_edit()
-            ),
+            apply_actuator_controller_edit(&mut actuator, &mut controller, angular_edit()),
             Err(ActuatorControllerEditError::MissingOscillatorGoal)
         );
         assert_eq!(actuator, original_actuator);
@@ -305,11 +300,7 @@ mod tests {
 
         actuator.kind = ActuatorKind::MuscleTendon;
         assert_eq!(
-            apply_actuator_controller_edit(
-                &mut actuator,
-                &mut controller,
-                angular_edit()
-            ),
+            apply_actuator_controller_edit(&mut actuator, &mut controller, angular_edit()),
             Err(ActuatorControllerEditError::UnsupportedActuatorKind)
         );
     }
@@ -320,22 +311,14 @@ mod tests {
         let mut controller = behavior(&actuator.id);
         controller.goals.push(controller.goals[1].clone());
         assert_eq!(
-            apply_actuator_controller_edit(
-                &mut actuator,
-                &mut controller,
-                angular_edit()
-            ),
+            apply_actuator_controller_edit(&mut actuator, &mut controller, angular_edit()),
             Err(ActuatorControllerEditError::MultipleOscillatorGoals)
         );
 
         controller.goals.pop();
         controller.controller = ControllerKind::Feedback;
         assert_eq!(
-            apply_actuator_controller_edit(
-                &mut actuator,
-                &mut controller,
-                angular_edit()
-            ),
+            apply_actuator_controller_edit(&mut actuator, &mut controller, angular_edit()),
             Err(ActuatorControllerEditError::UnsupportedController)
         );
     }
