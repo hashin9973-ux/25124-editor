@@ -407,7 +407,7 @@ macro_rules! joint_inspector_field {
         ));
     };
 }
- 
+
 macro_rules! joint_action_button {
     ($panel:expr, $label:expr, $action:expr, $color:expr) => {
         $panel
