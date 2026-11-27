@@ -1,3 +1,4 @@
+mod actuator_editing;
 mod camera_controls;
 mod joint_editing;
 mod part_editing;
@@ -10,6 +11,7 @@ use bevy::prelude::*;
 use bevy::text::EditableText;
 use bevy::ui_widgets::{Activate, Button, TextInput, observe};
 use bevy::window::PrimaryWindow;
+use actuator_editing::{ActuatorControllerEdit, apply_actuator_controller_edit};
 use camera_controls::CameraControlsPlugin;
 use joint_editing::{JointEdit, apply_joint_edit};
 use organism_core::{
@@ -45,6 +47,7 @@ fn main() {
         .init_resource::<PartInspectorState>()
         .init_resource::<JointSelection>()
         .init_resource::<JointInspectorState>()
+        .init_resource::<ActuatorInspectorState>()
         .add_systems(Startup, (setup_scene, setup_editor_panel))
         .add_systems(
             Update,
@@ -55,6 +58,7 @@ fn main() {
                 update_placement_settings_label,
                 update_part_inspector,
                 update_joint_inspector,
+                update_actuator_inspector,
                 draw_selected_part_outline,
             ),
         )
@@ -90,6 +94,12 @@ struct JointInspectorLabel;
 
 #[derive(Component)]
 struct JointInspectorStatusLabel;
+
+#[derive(Component)]
+struct ActuatorInspectorLabel;
+
+#[derive(Component)]
+struct ActuatorInspectorStatusLabel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InspectorField {
@@ -127,6 +137,30 @@ struct JointInspectorFieldInput(JointInspectorField);
 
 #[derive(Component, Clone, Copy)]
 struct JointInspectorFieldLabel(JointInspectorField);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ActuatorInspectorField {
+    ActuatorName,
+    MaxForce,
+    MaxTorque,
+    BehaviorName,
+    Frequency,
+    Amplitude,
+}
+
+#[derive(Component, Clone, Copy)]
+struct ActuatorInspectorFieldInput(ActuatorInspectorField);
+
+#[derive(Component, Clone, Copy)]
+struct ActuatorInspectorFieldLabel(ActuatorInspectorField);
+
+#[derive(Resource, Default)]
+struct ActuatorInspectorState {
+    selected_joint_id: Option<String>,
+    selected_actuator: Option<Actuator>,
+    selected_behavior: Option<Behavior>,
+    availability_message: String,
+}
 
 #[derive(Resource, Default)]
 struct JointInspectorState {
@@ -273,6 +307,7 @@ enum EditorButtonAction {
     Save,
     ApplyPartProperties,
     ApplyJointProperties,
+    ApplyActuatorControllerProperties,
 }
 
 fn setup_scene(
@@ -437,6 +472,67 @@ macro_rules! joint_action_button {
     };
 }
 
+macro_rules! actuator_inspector_field {
+    ($panel:expr, $label:expr, $field:ident) => {
+        $panel.spawn((
+            Text::new($label),
+            TextFont {
+                font_size: FontSize::Px(10.0),
+                ..default()
+            },
+            TextColor(Color::srgb(0.72, 0.76, 0.82)),
+            ActuatorInspectorFieldLabel(ActuatorInspectorField::$field),
+        ));
+        $panel.spawn((
+            TextInput,
+            EditableText::new(""),
+            Node {
+                width: Val::Px(236.0),
+                height: Val::Px(32.0),
+                padding: UiRect::axes(Val::Px(9.0), Val::Px(5.0)),
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.1, 0.12, 0.16)),
+            TextFont {
+                font_size: FontSize::Px(13.0),
+                ..default()
+            },
+            TextColor(Color::WHITE),
+            ActuatorInspectorFieldInput(ActuatorInspectorField::$field),
+        ));
+    };
+}
+
+macro_rules! actuator_action_button {
+    ($panel:expr, $label:expr, $action:expr, $color:expr) => {
+        $panel
+            .spawn((
+                Button,
+                Node {
+                    width: Val::Px(236.0),
+                    height: Val::Px(34.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor($color),
+                $action,
+                observe(handle_actuator_controller_activated),
+            ))
+            .with_children(|button| {
+                button.spawn((
+                    Text::new($label),
+                    TextFont {
+                        font_size: FontSize::Px(12.0),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            });
+    };
+}
+
 fn setup_editor_panel(mut commands: Commands) {
     commands
         .spawn((
@@ -556,6 +652,46 @@ fn setup_editor_panel(mut commands: Commands) {
                 },
                 TextColor(Color::srgb(0.82, 0.78, 0.57)),
                 JointInspectorStatusLabel,
+            ));
+
+
+            panel.spawn((
+                Text::new("ACTUATOR / CONTROLLER INSPECTOR"),
+                TextFont {
+                    font_size: FontSize::Px(10.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.45, 0.74, 0.95)),
+            ));
+            panel.spawn((
+                Text::new("Select a powered joint link to inspect its actuator and oscillator controller."),
+                TextFont {
+                    font_size: FontSize::Px(11.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.88, 0.86, 0.72)),
+                ActuatorInspectorLabel,
+            ));
+            actuator_inspector_field!(panel, "Actuator name", ActuatorName);
+            actuator_inspector_field!(panel, "Maximum force (N)", MaxForce);
+            actuator_inspector_field!(panel, "Maximum torque (N m)", MaxTorque);
+            actuator_inspector_field!(panel, "Controller behavior name", BehaviorName);
+            actuator_inspector_field!(panel, "Oscillation frequency (Hz)", Frequency);
+            actuator_inspector_field!(panel, "Oscillation amplitude", Amplitude);
+            actuator_action_button!(
+                panel,
+                "Apply actuator / controller",
+                EditorButtonAction::ApplyActuatorControllerProperties,
+                Color::srgb(0.23, 0.3, 0.42)
+            );
+            panel.spawn((
+                Text::new("Select a powered hinge or slider link to edit its live motor."),
+                TextFont {
+                    font_size: FontSize::Px(10.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.82, 0.78, 0.57)),
+                ActuatorInspectorStatusLabel,
             ));
 
             panel.spawn((
