@@ -997,7 +997,8 @@ fn handle_joint_properties_activated(
         &joint_inspector_inputs,
         &runtime_joint_entities,
         &fixed_joints,
-        &spherical_joints,        &revolute_joints,
+        &spherical_joints,
+        &revolute_joints,
         &prismatic_joints,
         &distance_joints,
         &mut commands,
@@ -1996,7 +1997,8 @@ fn update_part_inspector(
     let details = selected_part.map(describe_body_part).unwrap_or_else(|| {
         "No part selected. Choose Select / inspect part, then click a body in the viewport."
             .to_owned()
-    });    for mut label in &mut labels {
+    });
+    for mut label in &mut labels {
         label.0.clone_from(&details);
     }
     for (mut input, marker) in &mut inputs {
