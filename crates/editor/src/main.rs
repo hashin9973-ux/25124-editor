@@ -4,6 +4,7 @@ mod joint_editing;
 mod part_editing;
 mod runtime_geometry;
 
+use actuator_editing::{ActuatorControllerEdit, apply_actuator_controller_edit};
 use avian3d::prelude::*;
 use bevy::camera_controller::pan_orbit_camera::prelude::*;
 use bevy::picking::hover::Hovered;
@@ -11,7 +12,6 @@ use bevy::prelude::*;
 use bevy::text::EditableText;
 use bevy::ui_widgets::{Activate, Button, TextInput, observe};
 use bevy::window::PrimaryWindow;
-use actuator_editing::{ActuatorControllerEdit, apply_actuator_controller_edit};
 use camera_controls::CameraControlsPlugin;
 use joint_editing::{JointEdit, apply_joint_edit};
 use organism_core::{
@@ -947,13 +947,22 @@ fn handle_actuator_controller_activated(
     let Ok(action) = actions.get(activate.entity) else {
         return;
     };
-    if !matches!(*action, EditorButtonAction::ApplyActuatorControllerProperties) {
+    if !matches!(
+        *action,
+        EditorButtonAction::ApplyActuatorControllerProperties
+    ) {
         return;
     }
 
     apply_selected_actuator_controller_edit(
-        state.selected_actuator.as_ref().map(|actuator| actuator.id.as_str()),
-        state.selected_behavior.as_ref().map(|behavior| behavior.id.as_str()),
+        state
+            .selected_actuator
+            .as_ref()
+            .map(|actuator| actuator.id.as_str()),
+        state
+            .selected_behavior
+            .as_ref()
+            .map(|behavior| behavior.id.as_str()),
         &mut project,
         &inputs,
         &mut status,
@@ -988,8 +997,7 @@ fn handle_joint_properties_activated(
         &joint_inspector_inputs,
         &runtime_joint_entities,
         &fixed_joints,
-        &spherical_joints,
-        &revolute_joints,
+        &spherical_joints,        &revolute_joints,
         &prismatic_joints,
         &distance_joints,
         &mut commands,
@@ -1988,8 +1996,7 @@ fn update_part_inspector(
     let details = selected_part.map(describe_body_part).unwrap_or_else(|| {
         "No part selected. Choose Select / inspect part, then click a body in the viewport."
             .to_owned()
-    });
-    for mut label in &mut labels {
+    });    for mut label in &mut labels {
         label.0.clone_from(&details);
     }
     for (mut input, marker) in &mut inputs {
@@ -2006,7 +2013,6 @@ fn update_part_inspector(
     }
 }
 
-
 fn selected_actuator_controller<'a>(
     joint_id: Option<&str>,
     project: &'a DraftProject,
@@ -2014,7 +2020,12 @@ fn selected_actuator_controller<'a>(
     let Some(joint_id) = joint_id else {
         return Err("Select a powered joint link to inspect its actuator and controller.");
     };
-    if !project.organism.joints.iter().any(|joint| joint.id == joint_id) {
+    if !project
+        .organism
+        .joints
+        .iter()
+        .any(|joint| joint.id == joint_id)
+    {
         return Err("The selected joint is no longer in the organism.");
     }
 
@@ -2047,7 +2058,9 @@ fn selected_actuator_controller<'a>(
         return Err("No supported oscillator behavior is linked to this actuator.");
     };
     if behaviors.next().is_some() {
-        return Err("Multiple oscillator behaviors target this actuator; resolve duplicate controllers first.");
+        return Err(
+            "Multiple oscillator behaviors target this actuator; resolve duplicate controllers first.",
+        );
     }
     let matching_goal_count = behavior
         .goals
@@ -2077,7 +2090,11 @@ fn update_actuator_inspector(
 ) {
     let resolved = selected_actuator_controller(selection.joint_id.as_deref(), &project);
     let (selected_actuator, selected_behavior, availability_message) = match resolved {
-        Ok((actuator, behavior)) => (Some(actuator.clone()), Some(behavior.clone()), String::new()),
+        Ok((actuator, behavior)) => (
+            Some(actuator.clone()),
+            Some(behavior.clone()),
+            String::new(),
+        ),
         Err(message) => (None, None, message.to_owned()),
     };
     let selected_joint_id = selection.joint_id.clone();
@@ -2102,20 +2119,16 @@ fn update_actuator_inspector(
         label.0.clone_from(&description);
     }
     for (mut input, marker) in &mut inputs {
-        *input = EditableText::new(
-            match (&state.selected_actuator, &state.selected_behavior) {
-                (Some(actuator), Some(behavior)) => {
-                    actuator_inspector_field_value(actuator, behavior, marker.0)
-                }
-                _ => String::new(),
-            },
-        );
+        *input = EditableText::new(match (&state.selected_actuator, &state.selected_behavior) {
+            (Some(actuator), Some(behavior)) => {
+                actuator_inspector_field_value(actuator, behavior, marker.0)
+            }
+            _ => String::new(),
+        });
     }
     for (marker, mut label) in &mut field_labels {
         label.0 = match (&state.selected_actuator, &state.selected_behavior) {
-            (Some(actuator), Some(_behavior)) => {
-                actuator_inspector_field_label(actuator, marker.0)
-            }
+            (Some(actuator), Some(_behavior)) => actuator_inspector_field_label(actuator, marker.0),
             _ => actuator_inspector_field_label_for_empty_selection(marker.0).to_owned(),
         };
     }
@@ -2146,10 +2159,7 @@ fn actuator_inspector_field_value(
     }
 }
 
-fn actuator_inspector_field_label(
-    actuator: &Actuator,
-    field: ActuatorInspectorField,
-) -> String {
+fn actuator_inspector_field_label(actuator: &Actuator, field: ActuatorInspectorField) -> String {
     match field {
         ActuatorInspectorField::ActuatorName => "Actuator name".into(),
         ActuatorInspectorField::MaxForce if actuator.kind == ActuatorKind::LinearMotor => {
@@ -2202,7 +2212,10 @@ fn describe_actuator_controller(actuator: &Actuator, behavior: &Behavior) -> Str
             actuator.max_torque_nm.unwrap_or_default()
         ),
         ActuatorKind::LinearMotor => {
-            format!("Maximum force: {:.3} N", actuator.max_force_n.unwrap_or_default())
+            format!(
+                "Maximum force: {:.3} N",
+                actuator.max_force_n.unwrap_or_default()
+            )
         }
         ActuatorKind::MuscleTendon => "Muscle-tendon runtime unavailable".into(),
     };
