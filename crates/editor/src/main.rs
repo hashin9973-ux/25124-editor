@@ -932,7 +932,32 @@ fn handle_editor_button_activated(
             }
         }
         EditorButtonAction::ApplyJointProperties => {}
+        EditorButtonAction::ApplyActuatorControllerProperties => {}
     }
+}
+
+fn handle_actuator_controller_activated(
+    activate: On<Activate>,
+    actions: Query<&EditorButtonAction>,
+    state: Res<ActuatorInspectorState>,
+    mut project: ResMut<DraftProject>,
+    inputs: Query<(&EditableText, &ActuatorInspectorFieldInput)>,
+    mut status: Query<&mut Text, With<ActuatorInspectorStatusLabel>>,
+) {
+    let Ok(action) = actions.get(activate.entity) else {
+        return;
+    };
+    if !matches!(*action, EditorButtonAction::ApplyActuatorControllerProperties) {
+        return;
+    }
+
+    apply_selected_actuator_controller_edit(
+        state.selected_actuator.as_ref().map(|actuator| actuator.id.as_str()),
+        state.selected_behavior.as_ref().map(|behavior| behavior.id.as_str()),
+        &mut project,
+        &inputs,
+        &mut status,
+    );
 }
 
 fn handle_joint_properties_activated(
@@ -1432,6 +1457,9 @@ fn drive_actuator_behaviors(
 ) {
     let elapsed = time.elapsed_secs();
     for behavior in &project.motion.behaviors {
+        if behavior.controller != ControllerKind::Oscillator {
+            continue;
+        }
         for goal in &behavior.goals {
             let MotionGoal::OscillateActuator {
                 actuator_id,
@@ -1455,6 +1483,9 @@ fn drive_actuator_behaviors(
                 ActuatorKind::AngularMotor => {
                     for (mut joint, tag) in &mut angular_joints {
                         if tag.id == actuator.joint_id {
+                            if let Some(max_torque_nm) = actuator.max_torque_nm {
+                                joint.motor.max_torque = max_torque_nm;
+                            }
                             joint.motor.target_position = target;
                             break;
                         }
@@ -1463,6 +1494,9 @@ fn drive_actuator_behaviors(
                 ActuatorKind::LinearMotor => {
                     for (mut joint, tag) in &mut linear_joints {
                         if tag.id == actuator.joint_id {
+                            if let Some(max_force_n) = actuator.max_force_n {
+                                joint.motor.max_force = max_force_n;
+                            }
                             joint.motor.target_position = target;
                             break;
                         }
