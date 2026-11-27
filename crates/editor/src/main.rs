@@ -1,3 +1,5 @@
+[Reading 1000 lines from start (total: 1473 lines, 473 remaining)]
+
 mod camera_controls;
 mod part_editing;
 mod runtime_geometry;
@@ -82,8 +84,15 @@ struct InspectorStatusLabel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InspectorField {
-    Name, DimensionA, DimensionB, DimensionC,
-    Density, Friction, Restitution, LinearDamping, AngularDamping,
+    Name,
+    DimensionA,
+    DimensionB,
+    DimensionC,
+    Density,
+    Friction,
+    Restitution,
+    LinearDamping,
+    AngularDamping,
 }
 
 #[derive(Component, Clone, Copy)]
@@ -269,26 +278,30 @@ fn setup_scene(
 
 macro_rules! action_button {
     ($panel:expr, $label:expr, $action:expr, $color:expr) => {
-        $panel.spawn((
-            Button,
-            Node {
-                width: Val::Px(236.0),
-                height: Val::Px(34.0),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            BackgroundColor($color),
-            $action,
-            observe(handle_editor_button_activated),
-        ))
-        .with_children(|button| {
-            button.spawn((
-                Text::new($label),
-                TextFont { font_size: FontSize::Px(12.0), ..default() },
-                TextColor(Color::WHITE),
-            ));
-        });
+        $panel
+            .spawn((
+                Button,
+                Node {
+                    width: Val::Px(236.0),
+                    height: Val::Px(34.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor($color),
+                $action,
+                observe(handle_editor_button_activated),
+            ))
+            .with_children(|button| {
+                button.spawn((
+                    Text::new($label),
+                    TextFont {
+                        font_size: FontSize::Px(12.0),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            });
     };
 }
 
@@ -296,7 +309,10 @@ macro_rules! inspector_field {
     ($panel:expr, $label:expr, $field:ident) => {
         $panel.spawn((
             Text::new($label),
-            TextFont { font_size: FontSize::Px(10.0), ..default() },
+            TextFont {
+                font_size: FontSize::Px(10.0),
+                ..default()
+            },
             TextColor(Color::srgb(0.72, 0.76, 0.82)),
             InspectorFieldLabel(InspectorField::$field),
         ));
@@ -311,7 +327,10 @@ macro_rules! inspector_field {
                 ..default()
             },
             BackgroundColor(Color::srgb(0.1, 0.12, 0.16)),
-            TextFont { font_size: FontSize::Px(13.0), ..default() },
+            TextFont {
+                font_size: FontSize::Px(13.0),
+                ..default()
+            },
             TextColor(Color::WHITE),
             InspectorFieldInput(InspectorField::$field),
         ));
@@ -376,9 +395,9 @@ fn setup_editor_panel(mut commands: Commands) {
             inspector_field!(panel, "Dimension A", DimensionA);
             inspector_field!(panel, "Dimension B", DimensionB);
             inspector_field!(panel, "Dimension C", DimensionC);
-            inspector_field!(panel, "Density · kg/m³", Density);
+            inspector_field!(panel, "Density ┬╖ kg/m┬│", Density);
             inspector_field!(panel, "Friction coefficient", Friction);
-            inspector_field!(panel, "Restitution · 0–1", Restitution);
+            inspector_field!(panel, "Restitution ┬╖ 0ΓÇô1", Restitution);
             inspector_field!(panel, "Linear damping", LinearDamping);
             inspector_field!(panel, "Angular damping", AngularDamping);
             action_button!(
@@ -452,24 +471,24 @@ fn setup_editor_panel(mut commands: Commands) {
             );
             action_button!(
                 panel,
-                "Light material · 300 kg/m³",
+                "Light material ┬╖ 300 kg/m┬│",
                 EditorButtonAction::SetDensityLight,
                 Color::srgb(0.18, 0.2, 0.27)
             );
             action_button!(
                 panel,
-                "Medium material · 1,000 kg/m³",
+                "Medium material ┬╖ 1,000 kg/m┬│",
                 EditorButtonAction::SetDensityMedium,
                 Color::srgb(0.18, 0.2, 0.27)
             );
             action_button!(
                 panel,
-                "Dense material · 1,800 kg/m³",
+                "Dense material ┬╖ 1,800 kg/m┬│",
                 EditorButtonAction::SetDensityDense,
                 Color::srgb(0.18, 0.2, 0.27)
             );
             panel.spawn((
-                Text::new("Size 1.00× · Density 1,000 kg/m³"),
+                Text::new("Size 1.00├ù ┬╖ Density 1,000 kg/m┬│"),
                 TextFont {
                     font_size: FontSize::Px(11.0),
                     ..default()
@@ -568,7 +587,7 @@ fn update_placement_settings_label(
 
     for mut label in &mut labels {
         label.0 = format!(
-            "Size {:.2}× · Density {:.0} kg/m³",
+            "Size {:.2}├ù ┬╖ Density {:.0} kg/m┬│",
             placement.size_scale, placement.density_kg_m3
         );
     }
@@ -981,433 +1000,296 @@ fn connect_body_parts(
             max_torque_nm,
         });
         project.motion.behaviors.push(Behavior {
-            id: format!("behavior-{actuator_sequence:04}"),
-            name: format!("Oscillate {joint_id}"),
-            controller: ControllerKind::Oscillator,
-            goals: vec![MotionGoal::OscillateActuator {
-                actuator_id,
-                frequency_hz: 0.5,
-                amplitude: default_amplitude,
-            }],
-        });
-    }
-    info!("Created {kind:?} connection");
+
+--- C:\Users\sfesg\AppData\Local\Temp\tmp69.tmp contents: ---
+[Reading 289 lines from start (total: 289 lines, 0 remaining)]
+
+//! Validated, engine-independent body-part editing operations.
+
+use organism_core::{BodyPart, BodyPhysics, Geometry};
+use std::fmt;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PartEdit {
+    pub name: String,
+    pub geometry: Geometry,
+    pub density_kg_m3: f32,
+    pub friction: f32,
+    pub restitution: f32,
+    pub linear_damping: f32,
+    pub angular_damping: f32,
 }
 
-fn drive_actuator_behaviors(
-    time: Res<Time>,
-    project: Res<DraftProject>,
-    mut angular_joints: Query<(&mut RevoluteJoint, &RuntimeJointTag)>,
-    mut linear_joints: Query<(&mut PrismaticJoint, &RuntimeJointTag)>,
-) {
-    let elapsed = time.elapsed_secs();
-    for behavior in &project.motion.behaviors {
-        for goal in &behavior.goals {
-            let MotionGoal::OscillateActuator {
-                actuator_id,
-                frequency_hz,
-                amplitude,
-            } = goal
-            else {
-                continue;
-            };
-            let Some(actuator) = project
-                .organism
-                .actuators
-                .iter()
-                .find(|actuator| actuator.id == *actuator_id)
-            else {
-                continue;
-            };
-            let target = amplitude * (std::f32::consts::TAU * frequency_hz * elapsed).sin();
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PartEditError {
+    EmptyName,
+    GeometryTypeMismatch,
+    InvalidGeometry,
+    InvalidDensity,
+    InvalidFriction,
+    InvalidRestitution,
+    InvalidDamping,
+    UnsupportedPhysics,
+}
 
-            match actuator.kind {
-                ActuatorKind::AngularMotor => {
-                    for (mut joint, tag) in &mut angular_joints {
-                        if tag.id == actuator.joint_id {
-                            joint.motor.target_position = target;
-                            break;
-                        }
-                    }
-                }
-                ActuatorKind::LinearMotor => {
-                    for (mut joint, tag) in &mut linear_joints {
-                        if tag.id == actuator.joint_id {
-                            joint.motor.target_position = target;
-                            break;
-                        }
-                    }
-                }
-                ActuatorKind::MuscleTendon => {}
+impl fmt::Display for PartEditError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::EmptyName => "Part name cannot be empty.",
+            Self::GeometryTypeMismatch => {
+                "A part's primitive type cannot be changed through dimension fields."
             }
-        }
+            Self::InvalidGeometry => "Geometry dimensions must be finite and physically valid.",
+            Self::InvalidDensity => "Density must be finite and greater than zero kg/m┬│.",
+            Self::InvalidFriction => "Friction must be finite and non-negative.",
+            Self::InvalidRestitution => "Restitution must be between zero and one.",
+            Self::InvalidDamping => "Linear and angular damping must be finite and non-negative.",
+            Self::UnsupportedPhysics => "Only rigid body parts can be edited with this inspector.",
+        };
+        f.write_str(message)
     }
 }
 
+impl std::error::Error for PartEditError {}
 
-fn apply_selected_part_edit(
-    selected_part_id: Option<&str>,
-    project: &mut DraftProject,
-    inputs: &Query<(&EditableText, &InspectorFieldInput)>,
-    part_entities: &Query<(Entity, &PartTag)>,
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    status: &mut Query<&mut Text, With<InspectorStatusLabel>>,
-) {
-    let Some(part_id) = selected_part_id else {
-        set_inspector_status(status, "Select a body part before applying changes.");
-        return;
-    };
-    let Some(part_index) = project.organism.parts.iter().position(|part| part.id == part_id) else {
-        set_inspector_status(status, "The selected part is no longer in the organism.");
-        return;
-    };
-    let Some((entity, _)) = part_entities.iter().find(|(_, tag)| tag.id == part_id) else {
-        set_inspector_status(status, "The selected part has no live physics entity.");
-        return;
-    };
-
-    let mut updated = project.organism.parts[part_index].clone();
-    if matches!(&updated.physics, BodyPhysics::Soft(_)) {
-        set_inspector_status(status, "Soft-body editing is unavailable until a deformable runtime solver exists.");
-        return;
+/// Validates and atomically applies a complete rigid-part edit. Mass is derived
+/// from primitive volume and density; failed edits leave the part unchanged.
+pub fn apply_part_edit(part: &mut BodyPart, edit: PartEdit) -> Result<(), PartEditError> {
+    if edit.name.trim().is_empty() {
+        return Err(PartEditError::EmptyName);
     }
-    let Some(name) = inspector_field_text(inputs, InspectorField::Name) else {
-        set_inspector_status(status, "Enter a non-empty part name.");
-        return;
-    };
-
-    let geometry = match &updated.geometry {
-        Geometry::Sphere { .. } => {
-            let Some(radius_m) = inspector_field_number(inputs, InspectorField::DimensionA) else {
-                set_inspector_status(status, "Enter a valid sphere radius in meters.");
-                return;
-            };
-            Geometry::Sphere { radius_m }
-        }
-        Geometry::Cuboid { .. } => {
-            let Some(x) = inspector_field_number(inputs, InspectorField::DimensionA) else {
-                set_inspector_status(status, "Enter a valid X half-extent in meters.");
-                return;
-            };
-            let Some(y) = inspector_field_number(inputs, InspectorField::DimensionB) else {
-                set_inspector_status(status, "Enter a valid Y half-extent in meters.");
-                return;
-            };
-            let Some(z) = inspector_field_number(inputs, InspectorField::DimensionC) else {
-                set_inspector_status(status, "Enter a valid Z half-extent in meters.");
-                return;
-            };
-            Geometry::Cuboid { half_extents_m: DataVec3::new(x, y, z) }
-        }
-        Geometry::Capsule { .. } => {
-            let Some(radius_m) = inspector_field_number(inputs, InspectorField::DimensionA) else {
-                set_inspector_status(status, "Enter a valid capsule radius in meters.");
-                return;
-            };
-            let Some(half_height_m) = inspector_field_number(inputs, InspectorField::DimensionB) else {
-                set_inspector_status(status, "Enter a valid capsule half-height in meters.");
-                return;
-            };
-            Geometry::Capsule { radius_m, half_height_m }
-        }
-    };
-
-    let Some(density_kg_m3) = inspector_field_number(inputs, InspectorField::Density) else {
-        set_inspector_status(status, "Enter a valid material density in kg/m³.");
-        return;
-    };
-    let Some(friction) = inspector_field_number(inputs, InspectorField::Friction) else {
-        set_inspector_status(status, "Enter a valid friction coefficient.");
-        return;
-    };
-    let Some(restitution) = inspector_field_number(inputs, InspectorField::Restitution) else {
-        set_inspector_status(status, "Enter restitution between zero and one.");
-        return;
-    };
-    let Some(linear_damping) = inspector_field_number(inputs, InspectorField::LinearDamping) else {
-        set_inspector_status(status, "Enter valid linear damping.");
-        return;
-    };
-    let Some(angular_damping) = inspector_field_number(inputs, InspectorField::AngularDamping) else {
-        set_inspector_status(status, "Enter valid angular damping.");
-        return;
-    };
-
-    if let Err(error) = apply_part_edit(&mut updated, PartEdit {
-        name, geometry, density_kg_m3, friction, restitution, linear_damping, angular_damping,
-    }) {
-        set_inspector_status(status, &error.to_string());
-        return;
+    if !same_geometry_kind(&part.geometry, &edit.geometry) {
+        return Err(PartEditError::GeometryTypeMismatch);
     }
+    if !edit.density_kg_m3.is_finite() || edit.density_kg_m3 <= 0.0 {
+        return Err(PartEditError::InvalidDensity);
+    }
+    if !edit.friction.is_finite() || edit.friction < 0.0 {
+        return Err(PartEditError::InvalidFriction);
+    }
+    if !edit.restitution.is_finite() || !(0.0..=1.0).contains(&edit.restitution) {
+        return Err(PartEditError::InvalidRestitution);
+    }
+    if !edit.linear_damping.is_finite()
+        || edit.linear_damping < 0.0
+        || !edit.angular_damping.is_finite()
+        || edit.angular_damping < 0.0
+    {
+        return Err(PartEditError::InvalidDamping);
+    }
+    if !matches!(&part.physics, BodyPhysics::Rigid(_)) {
+        return Err(PartEditError::UnsupportedPhysics);
+    }
+    let mass_kg = edit
+        .geometry
+        .mass_kg_at_density(edit.density_kg_m3)
+        .ok_or(PartEditError::InvalidGeometry)?;
 
-    let Some(runtime) = build_runtime_geometry(&updated.geometry) else {
-        set_inspector_status(status, "The edited geometry cannot be represented at runtime.");
-        return;
+    let BodyPhysics::Rigid(properties) = &mut part.physics else {
+        unreachable!("rigid-body type was validated above");
     };
-    let BodyPhysics::Rigid(properties) = &updated.physics else {
-        unreachable!("the validated edit operation only supports rigid bodies");
-    };
-    let mass_kg = properties.mass_kg;
-    let mass_properties =
-        MassPropertiesBundle::from_shape(&runtime.collider, properties.density_kg_m3);
-
-    commands.entity(entity).insert((
-        Mesh3d(meshes.add(runtime.mesh)),
-        runtime.collider,
-        mass_properties,
-        Friction::new(properties.friction),
-        Restitution::new(properties.restitution),
-        LinearDamping(properties.linear_damping),
-        AngularDamping(properties.angular_damping),
-        PartTag { id: part_id.to_owned(), pick_radius: runtime.pick_radius },
-    ));
-    project.organism.parts[part_index] = updated;
-    set_inspector_status(status, &format!("Applied part properties · mass {mass_kg:.4} kg."));
-    info!("Updated {part_id}: mass {mass_kg:.4} kg");
+    part.name = edit.name.trim().to_owned();
+    part.geometry = edit.geometry;
+    properties.mass_kg = mass_kg;
+    properties.density_kg_m3 = edit.density_kg_m3;
+    properties.friction = edit.friction;
+    properties.restitution = edit.restitution;
+    properties.linear_damping = edit.linear_damping;
+    properties.angular_damping = edit.angular_damping;
+    Ok(())
 }
 
-fn inspector_field_text(
-    inputs: &Query<(&EditableText, &InspectorFieldInput)>,
-    field: InspectorField,
-) -> Option<String> {
-    inputs.iter().find(|(_, marker)| marker.0 == field)
-        .map(|(input, _)| input.value().to_string())
-}
-
-fn inspector_field_number(
-    inputs: &Query<(&EditableText, &InspectorFieldInput)>,
-    field: InspectorField,
-) -> Option<f32> {
-    inspector_field_text(inputs, field)?.trim().parse::<f32>().ok()
-}
-
-fn inspector_field_value(part: &BodyPart, field: InspectorField) -> String {
-    match field {
-        InspectorField::Name => part.name.clone(),
-        InspectorField::DimensionA => match &part.geometry {
-            Geometry::Sphere { radius_m } => format!("{radius_m:.4}"),
-            Geometry::Cuboid { half_extents_m } => format!("{:.4}", half_extents_m.x),
-            Geometry::Capsule { radius_m, .. } => format!("{radius_m:.4}"),
-        },
-        InspectorField::DimensionB => match &part.geometry {
-            Geometry::Cuboid { half_extents_m } => format!("{:.4}", half_extents_m.y),
-            Geometry::Capsule { half_height_m, .. } => format!("{half_height_m:.4}"),
-            Geometry::Sphere { .. } => String::new(),
-        },
-        InspectorField::DimensionC => match &part.geometry {
-            Geometry::Cuboid { half_extents_m } => format!("{:.4}", half_extents_m.z),
-            Geometry::Sphere { .. } | Geometry::Capsule { .. } => String::new(),
-        },
-        InspectorField::Density => match &part.physics {
-            BodyPhysics::Rigid(p) => format!("{:.2}", p.density_kg_m3),
-            BodyPhysics::Soft(p) => format!("{:.2}", p.density_kg_m3),
-        },
-        InspectorField::Friction => match &part.physics {
-            BodyPhysics::Rigid(p) => format!("{:.3}", p.friction),
-            BodyPhysics::Soft(_) => String::new(),
-        },
-        InspectorField::Restitution => match &part.physics {
-            BodyPhysics::Rigid(p) => format!("{:.3}", p.restitution),
-            BodyPhysics::Soft(_) => String::new(),
-        },
-        InspectorField::LinearDamping => match &part.physics {
-            BodyPhysics::Rigid(p) => format!("{:.3}", p.linear_damping),
-            BodyPhysics::Soft(_) => String::new(),
-        },
-        InspectorField::AngularDamping => match &part.physics {
-            BodyPhysics::Rigid(p) => format!("{:.3}", p.angular_damping),
-            BodyPhysics::Soft(_) => String::new(),
-        },
-    }
-}
-
-fn inspector_field_label(part: &BodyPart, field: InspectorField) -> String {
-    match field {
-        InspectorField::Name => "Part name".into(),
-        InspectorField::DimensionA => match &part.geometry {
-            Geometry::Sphere { .. } => "Sphere radius · meters".into(),
-            Geometry::Cuboid { .. } => "Cuboid half-extent X · meters".into(),
-            Geometry::Capsule { .. } => "Capsule radius · meters".into(),
-        },
-        InspectorField::DimensionB => match &part.geometry {
-            Geometry::Cuboid { .. } => "Cuboid half-extent Y · meters".into(),
-            Geometry::Capsule { .. } => "Capsule cylindrical half-height · meters".into(),
-            Geometry::Sphere { .. } => "Not used by spheres".into(),
-        },
-        InspectorField::DimensionC => match &part.geometry {
-            Geometry::Cuboid { .. } => "Cuboid half-extent Z · meters".into(),
-            Geometry::Sphere { .. } | Geometry::Capsule { .. } => "Not used by this primitive".into(),
-        },
-        InspectorField::Density => "Density · kg/m³".into(),
-        InspectorField::Friction => "Friction coefficient".into(),
-        InspectorField::Restitution => "Restitution · 0–1".into(),
-        InspectorField::LinearDamping => "Linear damping".into(),
-        InspectorField::AngularDamping => "Angular damping".into(),
-    }
-}
-
-fn inspector_field_label_for_empty_selection(field: InspectorField) -> &'static str {
-    match field {
-        InspectorField::Name => "Part name",
-        InspectorField::DimensionA => "Dimension A · meters",
-        InspectorField::DimensionB => "Dimension B · meters",
-        InspectorField::DimensionC => "Dimension C · meters",
-        InspectorField::Density => "Density · kg/m³",
-        InspectorField::Friction => "Friction coefficient",
-        InspectorField::Restitution => "Restitution · 0–1",
-        InspectorField::LinearDamping => "Linear damping",
-        InspectorField::AngularDamping => "Angular damping",
-    }
-}
-
-fn set_inspector_status(labels: &mut Query<&mut Text, With<InspectorStatusLabel>>, message: &str) {
-    for mut label in labels.iter_mut() {
-        label.0 = message.to_owned();
-    }
-}
-
-fn update_part_inspector(
-    selection: Res<PartSelection>,
-    project: Res<DraftProject>,
-    mut state: ResMut<PartInspectorState>,
-    mut labels: Query<&mut Text, With<PartInspectorLabel>>,
-    mut inputs: Query<(&mut EditableText, &InspectorFieldInput)>,
-    mut field_labels: Query<(&InspectorFieldLabel, &mut Text)>,
-) {
-    let selected_part = selection.part_id.as_ref().and_then(|id| {
-        project.organism.parts.iter().find(|part| part.id == *id)
-    });
-    let selected_id = selection.part_id.clone();
-    if state.selected_part_id == selected_id && state.selected_part.as_ref() == selected_part {
-        return;
-    }
-
-    state.selected_part_id = selected_id;
-    state.selected_part = selected_part.cloned();
-
-    let details = selected_part.map(describe_body_part).unwrap_or_else(|| {
-        "No part selected. Choose Select / inspect part, then click a body in the viewport.".to_owned()
-    });
-    for mut label in &mut labels {
-        label.0.clone_from(&details);
-    }
-    for (mut input, marker) in &mut inputs {
-        *input = EditableText::new(
-            selected_part.map(|part| inspector_field_value(part, marker.0)).unwrap_or_default()
-        );
-    }
-    for (marker, mut label) in &mut field_labels {
-        label.0 = selected_part
-            .map(|part| inspector_field_label(part, marker.0))
-            .unwrap_or_else(|| inspector_field_label_for_empty_selection(marker.0).to_owned());
-    }
-}
-
-fn describe_body_part(part: &BodyPart) -> String {
-    let geometry = match &part.geometry {
-        Geometry::Sphere { radius_m } => format!("Sphere · radius {radius_m:.3} m"),
-        Geometry::Cuboid { half_extents_m } => format!(
-            "Cuboid · half-extents ({:.3}, {:.3}, {:.3}) m",
-            half_extents_m.x, half_extents_m.y, half_extents_m.z
-        ),
-        Geometry::Capsule {
-            radius_m,
-            half_height_m,
-        } => format!("Capsule · radius {radius_m:.3} m · half-height {half_height_m:.3} m"),
-    };
-
-    let physics = match &part.physics {
-        BodyPhysics::Rigid(properties) => format!(
-            "Rigid body\nMass: {:.3} kg\nDensity: {:.1} kg/m³\nFriction: {:.2}\nRestitution: {:.2}\nLinear damping: {:.3}\nAngular damping: {:.3}",
-            properties.mass_kg,
-            properties.density_kg_m3,
-            properties.friction,
-            properties.restitution,
-            properties.linear_damping,
-            properties.angular_damping
-        ),
-        BodyPhysics::Soft(properties) => format!(
-            "Soft body\nDensity: {:.1} kg/m³\nElastic modulus: {:.1} Pa\nDamping ratio: {:.3}\nResolution: {}",
-            properties.density_kg_m3,
-            properties.elastic_modulus_pa,
-            properties.damping_ratio,
-            properties.resolution
-        ),
-    };
-
-    format!(
-        "{} ({})\nGeometry: {}\nRest position: ({:.3}, {:.3}, {:.3}) m\n{}",
-        part.name,
-        part.id,
-        geometry,
-        part.transform.translation_m.x,
-        part.transform.translation_m.y,
-        part.transform.translation_m.z,
-        physics
+fn same_geometry_kind(current: &Geometry, proposed: &Geometry) -> bool {
+    matches!(
+        (current, proposed),
+        (Geometry::Sphere { .. }, Geometry::Sphere { .. })
+            | (Geometry::Cuboid { .. }, Geometry::Cuboid { .. })
+            | (Geometry::Capsule { .. }, Geometry::Capsule { .. })
     )
 }
 
-fn draw_selected_part_outline(
-    mut gizmos: Gizmos,
-    selection: Res<PartSelection>,
-    parts: Query<(&GlobalTransform, &PartTag)>,
-) {
-    let Some(selected_id) = selection.part_id.as_deref() else {
-        return;
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use organism_core::{Organism, RigidBodyProperties, SoftBodyProperties, Transform3, Vec3};
 
-    if let Some((transform, tag)) = parts.iter().find(|(_, tag)| tag.id == selected_id) {
-        gizmos.sphere(
-            transform.translation(),
-            tag.pick_radius * 1.16,
-            Color::srgb(1.0, 0.82, 0.28),
-        );
-    }
-}
-
-fn draw_joint_links(
-    mut gizmos: Gizmos,
-    part_query: Query<(&GlobalTransform, &PartTag)>,
-    project: Res<DraftProject>,
-) {
-    for joint in &project.organism.joints {
-        let parent = part_query
-            .iter()
-            .find(|(_, tag)| tag.id == joint.parent_part_id)
-            .map(|(transform, _)| transform.translation());
-        let child = part_query
-            .iter()
-            .find(|(_, tag)| tag.id == joint.child_part_id)
-            .map(|(transform, _)| transform.translation());
-
-        if let (Some(parent), Some(child)) = (parent, child) {
-            gizmos.line(parent, child, Color::srgb(0.95, 0.78, 0.32));
+    fn rigid_part(geometry: Geometry) -> BodyPart {
+        BodyPart {
+            id: "part-0001".into(),
+            name: "Body".into(),
+            geometry,
+            transform: Transform3::default(),
+            physics: BodyPhysics::Rigid(RigidBodyProperties {
+                density_kg_m3: 950.0,
+                friction: 0.65,
+                restitution: 0.1,
+                linear_damping: 0.03,
+                angular_damping: 0.04,
+                ..Default::default()
+            }),
         }
     }
-}
 
-fn ray_sphere_distance(
-    ray_origin: Vec3,
-    ray_direction: Vec3,
-    sphere_center: Vec3,
-    sphere_radius: f32,
-) -> Option<f32> {
-    let offset = ray_origin - sphere_center;
-    let b = offset.dot(ray_direction);
-    let c = offset.length_squared() - sphere_radius * sphere_radius;
-    let discriminant = b * b - c;
-    if discriminant < 0.0 {
-        return None;
+    fn test_edit(geometry: Geometry) -> PartEdit {
+        PartEdit {
+            name: "  Edited body  ".into(),
+            geometry,
+            density_kg_m3: 1200.0,
+            friction: 0.8,
+            restitution: 0.25,
+            linear_damping: 0.1,
+            angular_damping: 0.2,
+        }
     }
 
-    let near = -b - discriminant.sqrt();
-    let far = -b + discriminant.sqrt();
-    if near >= 0.0 {
-        Some(near)
-    } else if far >= 0.0 {
-        Some(far)
-    } else {
-        None
+    #[test]
+    fn sphere_edit_updates_name_geometry_mass_and_material_properties() {
+        let mut part = rigid_part(Geometry::Sphere { radius_m: 0.2 });
+        apply_part_edit(&mut part, test_edit(Geometry::Sphere { radius_m: 0.4 }))
+            .expect("valid sphere edit");
+        assert_eq!(part.name, "Edited body");
+        assert_eq!(part.geometry, Geometry::Sphere { radius_m: 0.4 });
+        let BodyPhysics::Rigid(p) = part.physics else {
+            panic!("expected rigid body");
+        };
+        let mass = (4.0 / 3.0) * std::f32::consts::PI * 0.4_f32.powi(3) * 1200.0;
+        assert!((p.mass_kg - mass).abs() < 1.0e-5);
+        assert_eq!(p.density_kg_m3, 1200.0);
+        assert_eq!(p.friction, 0.8);
+        assert_eq!(p.restitution, 0.25);
+        assert_eq!(p.linear_damping, 0.1);
+        assert_eq!(p.angular_damping, 0.2);
+    }
+
+    #[test]
+    fn cuboid_half_extents_edit_recalculates_mass() {
+        let mut part = rigid_part(Geometry::Cuboid {
+            half_extents_m: Vec3::new(0.2, 0.2, 0.2),
+        });
+        let geometry = Geometry::Cuboid {
+            half_extents_m: Vec3::new(0.3, 0.4, 0.5),
+        };
+        apply_part_edit(&mut part, test_edit(geometry.clone())).expect("valid cuboid edit");
+        assert_eq!(part.geometry, geometry);
+        let BodyPhysics::Rigid(p) = part.physics else {
+            panic!("expected rigid body");
+        };
+        assert!((p.mass_kg - 8.0 * 0.3 * 0.4 * 0.5 * 1200.0).abs() < 1.0e-3);
+    }
+
+    #[test]
+    fn capsule_radius_and_half_height_edit_recalculates_mass() {
+        let mut part = rigid_part(Geometry::Capsule {
+            radius_m: 0.2,
+            half_height_m: 0.3,
+        });
+        let geometry = Geometry::Capsule {
+            radius_m: 0.15,
+            half_height_m: 0.45,
+        };
+        apply_part_edit(&mut part, test_edit(geometry.clone())).expect("valid capsule edit");
+        assert_eq!(part.geometry, geometry);
+        let BodyPhysics::Rigid(p) = part.physics else {
+            panic!("expected rigid body");
+        };
+        let volume = std::f32::consts::PI * 0.15_f32.powi(2) * 0.9
+            + (4.0 / 3.0) * std::f32::consts::PI * 0.15_f32.powi(3);
+        assert!((p.mass_kg - volume * 1200.0).abs() < 1.0e-4);
+    }
+
+    #[test]
+    fn capsule_allows_zero_cylindrical_half_height() {
+        let mut part = rigid_part(Geometry::Capsule {
+            radius_m: 0.2,
+            half_height_m: 0.3,
+        });
+        apply_part_edit(
+            &mut part,
+            test_edit(Geometry::Capsule {
+                radius_m: 0.25,
+                half_height_m: 0.0,
+            }),
+        )
+        .expect("hemisphere-only capsule is valid");
+    }
+
+    #[test]
+    fn invalid_edits_do_not_partially_mutate_part() {
+        let cases = [
+            (PartEditError::EmptyName, 0),
+            (PartEditError::InvalidDensity, 1),
+            (PartEditError::InvalidFriction, 2),
+            (PartEditError::InvalidRestitution, 3),
+            (PartEditError::InvalidDamping, 4),
+            (PartEditError::InvalidGeometry, 5),
+        ];
+        for (expected, case) in cases {
+            let mut part = rigid_part(Geometry::Sphere { radius_m: 0.2 });
+            let original = part.clone();
+            let mut edit = test_edit(Geometry::Sphere { radius_m: 0.4 });
+            match case {
+                0 => edit.name = " ".into(),
+                1 => edit.density_kg_m3 = f32::NAN,
+                2 => edit.friction = -0.1,
+                3 => edit.restitution = 1.1,
+                4 => edit.angular_damping = f32::INFINITY,
+                _ => {
+                    edit.geometry = Geometry::Sphere {
+                        radius_m: f32::INFINITY,
+                    }
+                }
+            }
+            assert_eq!(apply_part_edit(&mut part, edit), Err(expected));
+            assert_eq!(part, original);
+        }
+    }
+
+    #[test]
+    fn rejects_geometry_type_changes_and_soft_parts() {
+        let mut part = rigid_part(Geometry::Sphere { radius_m: 0.2 });
+        let original = part.clone();
+        let mismatch = test_edit(Geometry::Cuboid {
+            half_extents_m: Vec3::new(0.2, 0.2, 0.2),
+        });
+        assert_eq!(
+            apply_part_edit(&mut part, mismatch),
+            Err(PartEditError::GeometryTypeMismatch)
+        );
+        assert_eq!(part, original);
+        part.physics = BodyPhysics::Soft(SoftBodyProperties {
+            density_kg_m3: 900.0,
+            elastic_modulus_pa: 100_000.0,
+            damping_ratio: 0.2,
+            resolution: 4,
+        });
+        let original = part.clone();
+        let soft = PartEdit {
+            name: part.name.clone(),
+            geometry: part.geometry.clone(),
+            density_kg_m3: 900.0,
+            friction: 0.5,
+            restitution: 0.0,
+            linear_damping: 0.05,
+            angular_damping: 0.05,
+        };
+        assert_eq!(
+            apply_part_edit(&mut part, soft),
+            Err(PartEditError::UnsupportedPhysics)
+        );
+        assert_eq!(part, original);
+    }
+
+    #[test]
+    fn edited_part_is_encoded_in_the_organism_document() {
+        let mut organism = Organism::new("Editable organism");
+        let mut part = rigid_part(Geometry::Sphere { radius_m: 0.2 });
+        apply_part_edit(&mut part, test_edit(Geometry::Sphere { radius_m: 0.35 }))
+            .expect("valid edit");
+        organism.parts.push(part);
+        let json = organism_serialization::encode_organism(&organism)
+            .expect("edited organism should pass validation and encode");
+        assert!(json.contains("\"radius_m\": 0.35"));
+        assert!(json.contains("\"name\": \"Edited body\""));
+        assert!(json.contains("\"density_kg_m3\": 1200.0"));
     }
 }
