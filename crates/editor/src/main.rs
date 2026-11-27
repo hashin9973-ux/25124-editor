@@ -1,4 +1,5 @@
 mod camera_controls;
+mod joint_editing;
 mod part_editing;
 mod runtime_geometry;
 
@@ -16,6 +17,7 @@ use organism_core::{
     Vec3 as DataVec3,
 };
 use organism_serialization::save_project;
+use joint_editing::{JointEdit, apply_joint_edit};
 use part_editing::{PartEdit, apply_part_edit};
 use runtime_geometry::build_runtime_geometry;
 use std::path::Path;
@@ -41,6 +43,8 @@ fn main() {
         .init_resource::<PlacementSettings>()
         .init_resource::<PartSelection>()
         .init_resource::<PartInspectorState>()
+        .init_resource::<JointSelection>()
+        .init_resource::<JointInspectorState>()
         .add_systems(Startup, (setup_scene, setup_editor_panel))
         .add_systems(
             Update,
@@ -50,6 +54,7 @@ fn main() {
                 drive_actuator_behaviors,
                 update_placement_settings_label,
                 update_part_inspector,
+                update_joint_inspector,
                 draw_selected_part_outline,
             ),
         )
@@ -80,6 +85,12 @@ struct PartInspectorLabel;
 #[derive(Component)]
 struct InspectorStatusLabel;
 
+#[derive(Component)]
+struct JointInspectorLabel;
+
+#[derive(Component)]
+struct JointInspectorStatusLabel;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InspectorField {
     Name,
@@ -98,6 +109,35 @@ struct InspectorFieldInput(InspectorField);
 
 #[derive(Component, Clone, Copy)]
 struct InspectorFieldLabel(InspectorField);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum JointInspectorField {
+    Name,
+    ParentAnchorX,
+    ParentAnchorY,
+    ParentAnchorZ,
+    ChildAnchorX,
+    ChildAnchorY,
+    ChildAnchorZ,
+    RestLength,
+}
+
+#[derive(Component, Clone, Copy)]
+struct JointInspectorFieldInput(JointInspectorField);
+
+#[derive(Component, Clone, Copy)]
+struct JointInspectorFieldLabel(JointInspectorField);
+
+#[derive(Resource, Default)]
+struct JointInspectorState {
+    selected_joint_id: Option<String>,
+    selected_joint: Option<Joint>,
+}
+
+#[derive(Resource, Default)]
+struct JointSelection {
+    joint_id: Option<String>,
+}
 
 #[derive(Resource, Default)]
 struct PartInspectorState {
@@ -232,6 +272,7 @@ enum EditorButtonAction {
     SetDensityDense,
     Save,
     ApplyPartProperties,
+    ApplyJointProperties,
 }
 
 fn setup_scene(
@@ -335,6 +376,39 @@ macro_rules! inspector_field {
     };
 }
 
+
+macro_rules! joint_inspector_field {
+    ($panel:expr, $label:expr, $field:ident) => {
+        $panel.spawn((
+            Text::new($label),
+            TextFont {
+                font_size: FontSize::Px(10.0),
+                ..default()
+            },
+            TextColor(Color::srgb(0.72, 0.76, 0.82)),
+            JointInspectorFieldLabel(JointInspectorField::$field),
+        ));
+        $panel.spawn((
+            TextInput,
+            EditableText::new(""),
+            Node {
+                width: Val::Px(236.0),
+                height: Val::Px(32.0),
+                padding: UiRect::axes(Val::Px(9.0), Val::Px(5.0)),
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.1, 0.12, 0.16)),
+            TextFont {
+                font_size: FontSize::Px(13.0),
+                ..default()
+            },
+            TextColor(Color::WHITE),
+            JointInspectorFieldInput(JointInspectorField::$field),
+        ));
+    };
+}
+
 fn setup_editor_panel(mut commands: Commands) {
     commands
         .spawn((
@@ -412,6 +486,48 @@ fn setup_editor_panel(mut commands: Commands) {
                 },
                 TextColor(Color::srgb(0.82, 0.78, 0.57)),
                 InspectorStatusLabel,
+            ));
+
+
+            panel.spawn((
+                Text::new("JOINT INSPECTOR"),
+                TextFont {
+                    font_size: FontSize::Px(10.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.45, 0.74, 0.95)),
+            ));
+            panel.spawn((
+                Text::new("No joint selected. Choose Select / inspect part, then click a joint link."),
+                TextFont {
+                    font_size: FontSize::Px(11.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.88, 0.86, 0.72)),
+                JointInspectorLabel,
+            ));
+            joint_inspector_field!(panel, "Joint name", Name);
+            joint_inspector_field!(panel, "Parent local anchor X (m)", ParentAnchorX);
+            joint_inspector_field!(panel, "Parent local anchor Y (m)", ParentAnchorY);
+            joint_inspector_field!(panel, "Parent local anchor Z (m)", ParentAnchorZ);
+            joint_inspector_field!(panel, "Child local anchor X (m)", ChildAnchorX);
+            joint_inspector_field!(panel, "Child local anchor Y (m)", ChildAnchorY);
+            joint_inspector_field!(panel, "Child local anchor Z (m)", ChildAnchorZ);
+            joint_inspector_field!(panel, "Distance rest length (m)", RestLength);
+            action_button!(
+                panel,
+                "Apply joint properties",
+                EditorButtonAction::ApplyJointProperties,
+                Color::srgb(0.23, 0.3, 0.42)
+            );
+            panel.spawn((
+                Text::new("Select a joint link to edit its anchors and properties."),
+                TextFont {
+                    font_size: FontSize::Px(10.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.82, 0.78, 0.57)),
+                JointInspectorStatusLabel,
             ));
 
             panel.spawn((
@@ -598,11 +714,20 @@ fn handle_editor_button_activated(
     mut placement: ResMut<PlacementSettings>,
     mut project: ResMut<DraftProject>,
     selection: Res<PartSelection>,
+    joint_selection: Res<JointSelection>,
     inspector_inputs: Query<(&EditableText, &InspectorFieldInput)>,
+    joint_inspector_inputs: Query<(&EditableText, &JointInspectorFieldInput)>,
     part_entities: Query<(Entity, &PartTag)>,
+    runtime_joint_entities: Query<(Entity, &RuntimeJointTag)>,
+    fixed_joints: Query<&FixedJoint>,
+    spherical_joints: Query<&SphericalJoint>,
+    revolute_joints: Query<&RevoluteJoint>,
+    prismatic_joints: Query<&PrismaticJoint>,
+    distance_joints: Query<&DistanceJoint>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut inspector_status: Query<&mut Text, With<InspectorStatusLabel>>,
+    mut joint_inspector_status: Query<&mut Text, With<JointInspectorStatusLabel>>,
 ) {
     let Ok(action) = actions.get(activate.entity) else {
         return;
@@ -637,6 +762,21 @@ fn handle_editor_button_activated(
                 &mut inspector_status,
             );
         }
+        EditorButtonAction::ApplyJointProperties => {
+            apply_selected_joint_edit(
+                joint_selection.joint_id.as_deref(),
+                &mut project,
+                &joint_inspector_inputs,
+                &runtime_joint_entities,
+                &fixed_joints,
+                &spherical_joints,
+                &revolute_joints,
+                &prismatic_joints,
+                &distance_joints,
+                &mut commands,
+                &mut joint_inspector_status,
+            );
+        }
         EditorButtonAction::Save => {
             match save_project(
                 Path::new(EXPORT_DIRECTORY),
@@ -666,6 +806,7 @@ fn edit_from_viewport(
     tool: Res<EditorTool>,
     placement: Res<PlacementSettings>,
     mut selection: ResMut<PartSelection>,
+    mut joint_selection: ResMut<JointSelection>,
 ) {
     if !buttons.just_pressed(MouseButton::Left) {
         return;
@@ -689,15 +830,28 @@ fn edit_from_viewport(
     let ray_direction = ray.direction.as_vec3();
 
     if *tool == EditorTool::Select {
-        let picked = pick_body_part(ray.origin, ray_direction, &part_query)
-            .map(|(_, _, part_id, _)| part_id);
-
-        if selection.part_id != picked {
-            match &picked {
-                Some(part_id) => info!("Selected {part_id}"),
-                None => info!("Selection cleared"),
+        if let Some((_, joint_id)) = pick_joint(
+            ray.origin,
+            ray_direction,
+            &project.organism.joints,
+            &part_query,
+        ) {
+            selection.part_id = None;
+            if joint_selection.joint_id.as_deref() != Some(joint_id.as_str()) {
+                info!("Selected joint {joint_id}");
             }
-            selection.part_id = picked;
+            joint_selection.joint_id = Some(joint_id);
+        } else {
+            let picked = pick_body_part(ray.origin, ray_direction, &part_query)
+                .map(|(_, _, part_id, _)| part_id);
+            joint_selection.joint_id = None;
+            if selection.part_id != picked {
+                match &picked {
+                    Some(part_id) => info!("Selected {part_id}"),
+                    None => info!("Selection cleared"),
+                }
+                selection.part_id = picked;
+            }
         }
         return;
     }
@@ -802,6 +956,73 @@ fn place_body_part(
     info!("Added {part_id}");
 }
 
+
+fn pick_joint(
+    ray_origin: Vec3,
+    ray_direction: Vec3,
+    joints: &[Joint],
+    part_query: &Query<(Entity, &GlobalTransform, &PartTag)>,
+) -> Option<(f32, String)> {
+    joints
+        .iter()
+        .filter_map(|joint| {
+            let parent = part_query
+                .iter()
+                .find(|(_, _, tag)| tag.id == joint.parent_part_id)
+                .map(|(_, transform, _)| transform.translation())?;
+            let child = part_query
+                .iter()
+                .find(|(_, _, tag)| tag.id == joint.child_part_id)
+                .map(|(_, transform, _)| transform.translation())?;
+            let distance = ray_segment_distance(ray_origin, ray_direction, parent, child);
+            let pick_radius = 0.14 + parent.distance(child) * 0.01;
+            (distance <= pick_radius).then(|| (distance, joint.id.clone()))
+        })
+        .min_by(|left, right| left.0.total_cmp(&right.0))
+}
+
+fn ray_segment_distance(
+    ray_origin: Vec3,
+    ray_direction: Vec3,
+    segment_start: Vec3,
+    segment_end: Vec3,
+) -> f32 {
+    let segment = segment_end - segment_start;
+    let offset = ray_origin - segment_start;
+    let ray_length_squared = ray_direction.length_squared();
+    let segment_length_squared = segment.length_squared();
+
+    if segment_length_squared <= f32::EPSILON {
+        let ray_parameter = (-offset.dot(ray_direction) / ray_length_squared).max(0.0);
+        return (offset + ray_direction * ray_parameter).length();
+    }
+
+    let ray_segment_dot = ray_direction.dot(segment);
+    let ray_offset_dot = ray_direction.dot(offset);
+    let segment_offset_dot = segment.dot(offset);
+    let denominator = ray_length_squared * segment_length_squared - ray_segment_dot.powi(2);
+
+    let mut segment_parameter = if denominator.abs() > f32::EPSILON {
+        (ray_length_squared * segment_offset_dot - ray_segment_dot * ray_offset_dot)
+            / denominator
+    } else {
+        segment_offset_dot / segment_length_squared
+    }
+    .clamp(0.0, 1.0);
+
+    let mut ray_parameter =
+        ((ray_segment_dot * segment_parameter - ray_offset_dot) / ray_length_squared).max(0.0);
+    segment_parameter = ((ray_segment_dot * ray_parameter + segment_offset_dot)
+        / segment_length_squared)
+        .clamp(0.0, 1.0);
+    ray_parameter =
+        ((ray_segment_dot * segment_parameter - ray_offset_dot) / ray_length_squared).max(0.0);
+
+    let closest_ray = ray_origin + ray_direction * ray_parameter;
+    let closest_segment = segment_start + segment * segment_parameter;
+    closest_ray.distance(closest_segment)
+}
+
 fn pick_body_part(
     ray_origin: Vec3,
     ray_direction: Vec3,
@@ -864,17 +1085,27 @@ fn connect_body_parts(
     let child_position = child_transform.translation();
     let center_distance = parent_position.distance(child_position);
     let world_anchor = (parent_position + child_position) * 0.5;
+    let joint_sequence = project.next_joint_id;
+    let joint_id = format!("joint-{joint_sequence:04}");
 
     match kind {
         JointKind::Fixed => {
-            commands.spawn(FixedJoint::new(parent_entity, child_entity).with_anchor(world_anchor));
+            commands.spawn((
+                FixedJoint::new(parent_entity, child_entity).with_anchor(world_anchor),
+                RuntimeJointTag {
+                    id: joint_id.clone(),
+                },
+            ));
         }
         JointKind::Ball => {
-            commands
-                .spawn(SphericalJoint::new(parent_entity, child_entity).with_anchor(world_anchor));
+            commands.spawn((
+                SphericalJoint::new(parent_entity, child_entity).with_anchor(world_anchor),
+                RuntimeJointTag {
+                    id: joint_id.clone(),
+                },
+            ));
         }
         JointKind::Hinge if powered_hinge => {
-            let joint_id = format!("joint-{:04}", project.next_joint_id);
             let motor = AngularMotor::new(MotorModel::SpringDamper {
                 frequency: 8.0,
                 damping_ratio: 1.0,
@@ -894,14 +1125,16 @@ fn connect_body_parts(
             commands.entity(child_entity).insert(SleepingDisabled);
         }
         JointKind::Hinge => {
-            commands.spawn(
+            commands.spawn((
                 RevoluteJoint::new(parent_entity, child_entity)
                     .with_anchor(world_anchor)
                     .with_hinge_axis(Vec3::Z),
-            );
+                RuntimeJointTag {
+                    id: joint_id.clone(),
+                },
+            ));
         }
         JointKind::Slider if powered_slider => {
-            let joint_id = format!("joint-{:04}", project.next_joint_id);
             let motor = LinearMotor::new(MotorModel::SpringDamper {
                 frequency: 8.0,
                 damping_ratio: 1.0,
@@ -921,21 +1154,26 @@ fn connect_body_parts(
             commands.entity(child_entity).insert(SleepingDisabled);
         }
         JointKind::Slider => {
-            commands.spawn(
+            commands.spawn((
                 PrismaticJoint::new(parent_entity, child_entity)
                     .with_anchor(world_anchor)
                     .with_slider_axis(Vec3::X),
-            );
+                RuntimeJointTag {
+                    id: joint_id.clone(),
+                },
+            ));
         }
         JointKind::Distance => {
-            commands.spawn(
+            commands.spawn((
                 DistanceJoint::new(parent_entity, child_entity)
                     .with_limits(center_distance.max(0.001), center_distance.max(0.001)),
-            );
+                RuntimeJointTag {
+                    id: joint_id.clone(),
+                },
+            ));
         }
     }
 
-    let joint_sequence = project.next_joint_id;
     project.next_joint_id += 1;
 
     let (anchor_parent, anchor_child, rest_length_m) = if kind == JointKind::Distance {
@@ -954,7 +1192,6 @@ fn connect_body_parts(
         )
     };
 
-    let joint_id = format!("joint-{joint_sequence:04}");
     project.organism.joints.push(Joint {
         id: joint_id.clone(),
         name: format!("{parent_id} to {child_id} {kind:?}"),
@@ -1216,6 +1453,196 @@ fn apply_selected_part_edit(
     info!("Updated {part_id}: mass {mass_kg:.4} kg");
 }
 
+
+fn apply_selected_joint_edit(
+    selected_joint_id: Option<&str>,
+    project: &mut DraftProject,
+    inputs: &Query<(&EditableText, &JointInspectorFieldInput)>,
+    runtime_joint_entities: &Query<(Entity, &RuntimeJointTag)>,
+    fixed_joints: &Query<&FixedJoint>,
+    spherical_joints: &Query<&SphericalJoint>,
+    revolute_joints: &Query<&RevoluteJoint>,
+    prismatic_joints: &Query<&PrismaticJoint>,
+    distance_joints: &Query<&DistanceJoint>,
+    commands: &mut Commands,
+    status: &mut Query<&mut Text, With<JointInspectorStatusLabel>>,
+) {
+    let Some(joint_id) = selected_joint_id else {
+        set_joint_inspector_status(status, "Select a joint link before applying changes.");
+        return;
+    };
+    let Some(joint_index) = project
+        .organism
+        .joints
+        .iter()
+        .position(|joint| joint.id == joint_id)
+    else {
+        set_joint_inspector_status(status, "The selected joint is no longer in the organism.");
+        return;
+    };
+    let Some((runtime_entity, _)) = runtime_joint_entities
+        .iter()
+        .find(|(_, tag)| tag.id == joint_id)
+    else {
+        set_joint_inspector_status(status, "The selected joint has no live physics constraint.");
+        return;
+    };
+
+    let mut updated = project.organism.joints[joint_index].clone();
+    let Some(name) = joint_inspector_field_text(inputs, JointInspectorField::Name) else {
+        set_joint_inspector_status(status, "Enter a non-empty joint name.");
+        return;
+    };
+    let Some(anchor_parent_m) = joint_inspector_vec3(
+        inputs,
+        JointInspectorField::ParentAnchorX,
+        JointInspectorField::ParentAnchorY,
+        JointInspectorField::ParentAnchorZ,
+    ) else {
+        set_joint_inspector_status(status, "Enter finite parent-local anchor coordinates in meters.");
+        return;
+    };
+    let Some(anchor_child_m) = joint_inspector_vec3(
+        inputs,
+        JointInspectorField::ChildAnchorX,
+        JointInspectorField::ChildAnchorY,
+        JointInspectorField::ChildAnchorZ,
+    ) else {
+        set_joint_inspector_status(status, "Enter finite child-local anchor coordinates in meters.");
+        return;
+    };
+    let rest_length_m = if updated.kind == JointKind::Distance {
+        let Some(length) = joint_inspector_field_number(inputs, JointInspectorField::RestLength)
+        else {
+            set_joint_inspector_status(status, "Enter a positive distance rest length in meters.");
+            return;
+        };
+        Some(length)
+    } else {
+        None
+    };
+
+    if let Err(error) = apply_joint_edit(
+        &mut updated,
+        JointEdit {
+            name,
+            anchor_parent_m,
+            anchor_child_m,
+            rest_length_m,
+        },
+    ) {
+        set_joint_inspector_status(status, &error.to_string());
+        return;
+    }
+
+    let parent_anchor = runtime_joint_anchor(updated.anchor_parent_m);
+    let child_anchor = runtime_joint_anchor(updated.anchor_child_m);
+    match updated.kind {
+        JointKind::Fixed => {
+            let Ok(current) = fixed_joints.get(runtime_entity) else {
+                set_joint_inspector_status(status, "The fixed constraint is not available.");
+                return;
+            };
+            commands.entity(runtime_entity).insert(
+                current
+                    .clone()
+                    .with_local_anchor1(parent_anchor)
+                    .with_local_anchor2(child_anchor),
+            );
+        }
+        JointKind::Ball => {
+            let Ok(current) = spherical_joints.get(runtime_entity) else {
+                set_joint_inspector_status(status, "The ball constraint is not available.");
+                return;
+            };
+            commands.entity(runtime_entity).insert(
+                current
+                    .clone()
+                    .with_local_anchor1(parent_anchor)
+                    .with_local_anchor2(child_anchor),
+            );
+        }
+        JointKind::Hinge => {
+            let Ok(current) = revolute_joints.get(runtime_entity) else {
+                set_joint_inspector_status(status, "The hinge constraint is not available.");
+                return;
+            };
+            commands.entity(runtime_entity).insert(
+                current
+                    .clone()
+                    .with_local_anchor1(parent_anchor)
+                    .with_local_anchor2(child_anchor),
+            );
+        }
+        JointKind::Slider => {
+            let Ok(current) = prismatic_joints.get(runtime_entity) else {
+                set_joint_inspector_status(status, "The slider constraint is not available.");
+                return;
+            };
+            commands.entity(runtime_entity).insert(
+                current
+                    .clone()
+                    .with_local_anchor1(parent_anchor)
+                    .with_local_anchor2(child_anchor),
+            );
+        }
+        JointKind::Distance => {
+            let Ok(current) = distance_joints.get(runtime_entity) else {
+                set_joint_inspector_status(status, "The distance constraint is not available.");
+                return;
+            };
+            let rest_length_m = updated.rest_length_m.unwrap_or_default();
+            commands.entity(runtime_entity).insert(
+                current
+                    .clone()
+                    .with_local_anchor1(parent_anchor)
+                    .with_local_anchor2(child_anchor)
+                    .with_limits(rest_length_m, rest_length_m),
+            );
+        }
+    }
+
+    project.organism.joints[joint_index] = updated;
+    set_joint_inspector_status(status, "Applied joint properties to the live constraint.");
+}
+
+fn runtime_joint_anchor(anchor: DataVec3) -> Vec3 {
+    Vec3::new(anchor.x, anchor.y, anchor.z)
+}
+
+fn joint_inspector_field_text(
+    inputs: &Query<(&EditableText, &JointInspectorFieldInput)>,
+    field: JointInspectorField,
+) -> Option<String> {
+    inputs
+        .iter()
+        .find(|(_, marker)| marker.0 == field)
+        .map(|(input, _)| input.value().to_string())
+}
+
+fn joint_inspector_field_number(
+    inputs: &Query<(&EditableText, &JointInspectorFieldInput)>,
+    field: JointInspectorField,
+) -> Option<f32> {
+    joint_inspector_field_text(inputs, field)?
+        .trim()
+        .parse::<f32>()
+        .ok()
+}
+
+fn joint_inspector_vec3(
+    inputs: &Query<(&EditableText, &JointInspectorFieldInput)>,
+    x: JointInspectorField,
+    y: JointInspectorField,
+    z: JointInspectorField,
+) -> Option<DataVec3> {
+    Some(DataVec3::new(
+        joint_inspector_field_number(inputs, x)?,
+        joint_inspector_field_number(inputs, y)?,
+        joint_inspector_field_number(inputs, z)?,
+    ))
+}
+
 fn inspector_field_text(
     inputs: &Query<(&EditableText, &InspectorFieldInput)>,
     field: InspectorField,
@@ -1364,6 +1791,126 @@ fn update_part_inspector(
     }
 }
 
+
+fn update_joint_inspector(
+    selection: Res<JointSelection>,
+    project: Res<DraftProject>,
+    mut state: ResMut<JointInspectorState>,
+    mut descriptions: Query<&mut Text, With<JointInspectorLabel>>,
+    mut inputs: Query<(&mut EditableText, &JointInspectorFieldInput)>,
+    mut field_labels: Query<(&JointInspectorFieldLabel, &mut Text)>,
+) {
+    let selected_joint = selection
+        .joint_id
+        .as_ref()
+        .and_then(|id| project.organism.joints.iter().find(|joint| joint.id == *id));
+    let selected_id = selection.joint_id.clone();
+    if state.selected_joint_id == selected_id && state.selected_joint.as_ref() == selected_joint {
+        return;
+    }
+
+    state.selected_joint_id = selected_id;
+    state.selected_joint = selected_joint.cloned();
+
+    let description = selected_joint
+        .map(describe_joint)
+        .unwrap_or_else(|| {
+            "No joint selected. Choose Select / inspect part, then click a connection line."
+                .to_owned()
+        });
+    for mut label in &mut descriptions {
+        label.0.clone_from(&description);
+    }
+    for (mut input, marker) in &mut inputs {
+        *input = EditableText::new(
+            selected_joint
+                .map(|joint| joint_inspector_field_value(joint, marker.0))
+                .unwrap_or_default(),
+        );
+    }
+    for (marker, mut label) in &mut field_labels {
+        label.0 = selected_joint
+            .map(|joint| joint_inspector_field_label(joint, marker.0))
+            .unwrap_or_else(|| joint_inspector_field_label_for_empty_selection(marker.0).to_owned());
+    }
+}
+
+fn joint_inspector_field_value(joint: &Joint, field: JointInspectorField) -> String {
+    match field {
+        JointInspectorField::Name => joint.name.clone(),
+        JointInspectorField::ParentAnchorX => format!("{:.4}", joint.anchor_parent_m.x),
+        JointInspectorField::ParentAnchorY => format!("{:.4}", joint.anchor_parent_m.y),
+        JointInspectorField::ParentAnchorZ => format!("{:.4}", joint.anchor_parent_m.z),
+        JointInspectorField::ChildAnchorX => format!("{:.4}", joint.anchor_child_m.x),
+        JointInspectorField::ChildAnchorY => format!("{:.4}", joint.anchor_child_m.y),
+        JointInspectorField::ChildAnchorZ => format!("{:.4}", joint.anchor_child_m.z),
+        JointInspectorField::RestLength => joint
+            .rest_length_m
+            .map(|length| format!("{length:.4}"))
+            .unwrap_or_default(),
+    }
+}
+
+fn joint_inspector_field_label(joint: &Joint, field: JointInspectorField) -> String {
+    match field {
+        JointInspectorField::Name => "Joint name".into(),
+        JointInspectorField::ParentAnchorX => "Parent local anchor X (m)".into(),
+        JointInspectorField::ParentAnchorY => "Parent local anchor Y (m)".into(),
+        JointInspectorField::ParentAnchorZ => "Parent local anchor Z (m)".into(),
+        JointInspectorField::ChildAnchorX => "Child local anchor X (m)".into(),
+        JointInspectorField::ChildAnchorY => "Child local anchor Y (m)".into(),
+        JointInspectorField::ChildAnchorZ => "Child local anchor Z (m)".into(),
+        JointInspectorField::RestLength if joint.kind == JointKind::Distance => {
+            "Distance rest length (m)".into()
+        }
+        JointInspectorField::RestLength => "Not used by this joint".into(),
+    }
+}
+
+fn joint_inspector_field_label_for_empty_selection(field: JointInspectorField) -> &'static str {
+    match field {
+        JointInspectorField::Name => "Joint name",
+        JointInspectorField::ParentAnchorX => "Parent local anchor X (m)",
+        JointInspectorField::ParentAnchorY => "Parent local anchor Y (m)",
+        JointInspectorField::ParentAnchorZ => "Parent local anchor Z (m)",
+        JointInspectorField::ChildAnchorX => "Child local anchor X (m)",
+        JointInspectorField::ChildAnchorY => "Child local anchor Y (m)",
+        JointInspectorField::ChildAnchorZ => "Child local anchor Z (m)",
+        JointInspectorField::RestLength => "Distance rest length (m)",
+    }
+}
+
+fn describe_joint(joint: &Joint) -> String {
+    let rest_length = joint
+        .rest_length_m
+        .map(|length| format!("Rest length: {length:.3} m"))
+        .unwrap_or_else(|| "Rest length: not applicable".into());
+    format!(
+        "{} ({})\nType: {:?}\nConnects: {} → {}\nParent anchor: ({:.3}, {:.3}, {:.3}) m\nChild anchor: ({:.3}, {:.3}, {:.3}) m\n{}",
+        joint.name,
+        joint.id,
+        joint.kind,
+        joint.parent_part_id,
+        joint.child_part_id,
+        joint.anchor_parent_m.x,
+        joint.anchor_parent_m.y,
+        joint.anchor_parent_m.z,
+        joint.anchor_child_m.x,
+        joint.anchor_child_m.y,
+        joint.anchor_child_m.z,
+        rest_length,
+    )
+}
+
+fn set_joint_inspector_status(
+    labels: &mut Query<&mut Text, With<JointInspectorStatusLabel>>,
+    message: &str,
+) {
+    for mut label in labels.iter_mut() {
+        label.0 = message.to_owned();
+    }
+}
+
 fn describe_body_part(part: &BodyPart) -> String {
     let geometry = match &part.geometry {
         Geometry::Sphere { radius_m } => format!("Sphere ┬╖ radius {radius_m:.3} m"),
@@ -1430,6 +1977,7 @@ fn draw_joint_links(
     mut gizmos: Gizmos,
     part_query: Query<(&GlobalTransform, &PartTag)>,
     project: Res<DraftProject>,
+    selection: Res<JointSelection>,
 ) {
     for joint in &project.organism.joints {
         let parent = part_query
@@ -1442,7 +1990,12 @@ fn draw_joint_links(
             .map(|(transform, _)| transform.translation());
 
         if let (Some(parent), Some(child)) = (parent, child) {
-            gizmos.line(parent, child, Color::srgb(0.95, 0.78, 0.32));
+            let color = if selection.joint_id.as_deref() == Some(joint.id.as_str()) {
+                Color::srgb(1.0, 0.88, 0.3)
+            } else {
+                Color::srgb(0.95, 0.78, 0.32)
+            };
+            gizmos.line(parent, child, color);
         }
     }
 }
