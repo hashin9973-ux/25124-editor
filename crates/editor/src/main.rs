@@ -11,13 +11,13 @@ use bevy::text::EditableText;
 use bevy::ui_widgets::{Activate, Button, TextInput, observe};
 use bevy::window::PrimaryWindow;
 use camera_controls::CameraControlsPlugin;
+use joint_editing::{JointEdit, apply_joint_edit};
 use organism_core::{
     Actuator, ActuatorKind, Behavior, BodyPart, BodyPhysics, ControllerKind, Geometry, Joint,
     JointKind, MotionDefinition, MotionGoal, Organism, RigidBodyProperties, Transform3,
     Vec3 as DataVec3,
 };
 use organism_serialization::save_project;
-use joint_editing::{JointEdit, apply_joint_edit};
 use part_editing::{PartEdit, apply_part_edit};
 use runtime_geometry::build_runtime_geometry;
 use std::path::Path;
@@ -375,7 +375,6 @@ macro_rules! inspector_field {
         ));
     };
 }
-
 
 macro_rules! joint_inspector_field {
     ($panel:expr, $label:expr, $field:ident) => {
@@ -956,7 +955,6 @@ fn place_body_part(
     info!("Added {part_id}");
 }
 
-
 fn pick_joint(
     ray_origin: Vec3,
     ray_direction: Vec3,
@@ -1003,8 +1001,7 @@ fn ray_segment_distance(
     let denominator = ray_length_squared * segment_length_squared - ray_segment_dot.powi(2);
 
     let mut segment_parameter = if denominator.abs() > f32::EPSILON {
-        (ray_length_squared * segment_offset_dot - ray_segment_dot * ray_offset_dot)
-            / denominator
+        (ray_length_squared * segment_offset_dot - ray_segment_dot * ray_offset_dot) / denominator
     } else {
         segment_offset_dot / segment_length_squared
     }
@@ -1453,7 +1450,6 @@ fn apply_selected_part_edit(
     info!("Updated {part_id}: mass {mass_kg:.4} kg");
 }
 
-
 fn apply_selected_joint_edit(
     selected_joint_id: Option<&str>,
     project: &mut DraftProject,
@@ -1499,7 +1495,10 @@ fn apply_selected_joint_edit(
         JointInspectorField::ParentAnchorY,
         JointInspectorField::ParentAnchorZ,
     ) else {
-        set_joint_inspector_status(status, "Enter finite parent-local anchor coordinates in meters.");
+        set_joint_inspector_status(
+            status,
+            "Enter finite parent-local anchor coordinates in meters.",
+        );
         return;
     };
     let Some(anchor_child_m) = joint_inspector_vec3(
@@ -1508,7 +1507,10 @@ fn apply_selected_joint_edit(
         JointInspectorField::ChildAnchorY,
         JointInspectorField::ChildAnchorZ,
     ) else {
-        set_joint_inspector_status(status, "Enter finite child-local anchor coordinates in meters.");
+        set_joint_inspector_status(
+            status,
+            "Enter finite child-local anchor coordinates in meters.",
+        );
         return;
     };
     let rest_length_m = if updated.kind == JointKind::Distance {
@@ -1791,7 +1793,6 @@ fn update_part_inspector(
     }
 }
 
-
 fn update_joint_inspector(
     selection: Res<JointSelection>,
     project: Res<DraftProject>,
@@ -1812,12 +1813,9 @@ fn update_joint_inspector(
     state.selected_joint_id = selected_id;
     state.selected_joint = selected_joint.cloned();
 
-    let description = selected_joint
-        .map(describe_joint)
-        .unwrap_or_else(|| {
-            "No joint selected. Choose Select / inspect part, then click a connection line."
-                .to_owned()
-        });
+    let description = selected_joint.map(describe_joint).unwrap_or_else(|| {
+        "No joint selected. Choose Select / inspect part, then click a connection line.".to_owned()
+    });
     for mut label in &mut descriptions {
         label.0.clone_from(&description);
     }
@@ -1831,7 +1829,9 @@ fn update_joint_inspector(
     for (marker, mut label) in &mut field_labels {
         label.0 = selected_joint
             .map(|joint| joint_inspector_field_label(joint, marker.0))
-            .unwrap_or_else(|| joint_inspector_field_label_for_empty_selection(marker.0).to_owned());
+            .unwrap_or_else(|| {
+                joint_inspector_field_label_for_empty_selection(marker.0).to_owned()
+            });
     }
 }
 
